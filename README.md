@@ -8,11 +8,43 @@ Open-source health intelligence engine. Scores your body composition, recovery, 
 
 Specifically:
 - **Scoring** — 20 health metrics scored against NHANES population percentiles (real CDC survey data, not arbitrary ranges). You get a percentile and a standing for every metric you feed it.
+- **Lab import** — feed it your blood work (lipids, metabolic panel, CBC, thyroid, inflammatory markers, Lp(a)) and it slots every value into population context. 18 lab markers supported today.
 - **Insights** — rule-based coaching signals from wearable data: HRV dropping? Sleep debt accumulating? Deficit too aggressive for your recovery? It flags compound effects, not just thresholds.
 - **Garmin integration** — pulls RHR, HRV, sleep, steps, VO2 max, zone 2 minutes, workouts, and daily calorie burn from Garmin Connect.
 - **Tracking** — weight trends with rolling averages, remaining-to-hit macros, 1RM estimation (RPE-based), DOTS score, habit streak analysis.
 
 All local. Zero PII in the repo. Your data stays on your machine.
+
+## The Coverage Journey
+
+The engine scores 20 metrics. Your **coverage score** tells you how many you've filled in — and the **gap analysis** tells you exactly what's missing and what it costs to close each one.
+
+You don't need everything on day one. Start with what you have, and the engine tells you where to invest next.
+
+### What gets you to 100%
+
+| Coverage | What You Need | Cost |
+|---|---|---|
+| **~20%** | Garmin watch (or any wearable) | Already own one? You're here. |
+| **~35%** | + bathroom scale + blood pressure cuff | ~$60 total |
+| **~75%** | + one blood draw (lipid panel, metabolic, CBC, thyroid, hs-CRP) | ~$100-200 via Quest/walk-in lab |
+| **~90%** | + waist circumference (tape measure) + family history + medication list | Free |
+| **100%** | + PHQ-9 mental health screen | Free (3-min questionnaire) |
+
+### Suggested Gear
+
+You probably own most of this already. If not, here's what closes the gaps:
+
+| Metric | Gear | Notes |
+|---|---|---|
+| RHR, HRV, Sleep, Steps, Zone 2 | **Garmin watch** (Venu, Forerunner, Fenix) | Any model with optical HR sensor. Also works with Oura, Apple Watch, WHOOP. |
+| Weight Trends | **Digital scale** | Any accurate scale. Weigh daily, the engine computes rolling averages. |
+| Blood Pressure | **Omron home BP cuff** | ~$40. Take 3 readings, log the average. Far more useful than a single office reading. |
+| Waist Circumference | **Tape measure** | $3. Measure at the navel, first thing in the morning. |
+| Labs (Lipids, Metabolic, CBC, Thyroid, hs-CRP, Lp(a)) | **Blood draw** | Quest Diagnostics walk-in or order through your doctor. A basic panel runs $30-100. Add ApoB and fasting insulin for the full picture. |
+| VO2 Max | **Your wearable** | Most GPS watches estimate this from running data. No extra gear needed. |
+
+The gap analysis in `python3 cli.py score` ranks these by information value — which $30 test or $40 device gives you the biggest jump in coverage.
 
 ## Where It's Going
 
@@ -20,7 +52,7 @@ The scoring engine and insight rules are the foundation. The interesting directi
 
 **Longitudinal intelligence.** Right now it's snapshot-based — "here's where you stand today." The next layer is time-series: how are your markers *trending* over months? Your HRV is 62ms today — is that up from 50 or down from 75? The trend changes the insight completely. Daily series pull is already built; the analysis layer is next.
 
-**Lab import + full health picture.** The scoring engine handles 20 metrics across blood panels (lipids, metabolic, inflammation, thyroid, CBC), wearable data, and self-report. Feed it a lab PDF and it slots every value into the population context. The gap analysis tells you exactly which $30 blood test would give you the most information.
+**Lab import + full health picture.** Lab import is live today — the engine scores lipids, metabolic panel, CBC, thyroid, hs-CRP, liver enzymes, Lp(a), ferritin, and vitamin D against NHANES population data. Drop your values into `lab_results.json` and they flow into your coverage score and coaching briefing. The next step is automated PDF parsing — feed it a Quest or Labcorp PDF and it extracts everything automatically.
 
 **Protocol engine.** Once you have scores + trends, the next question is *what do I do about it?* Sleep regularity bad? Here's a 2-week circadian protocol. HRV declining? Here's a recovery week template. This is where the insight rules evolve into actionable plans — the bridge between "what's happening" and "what to change."
 
