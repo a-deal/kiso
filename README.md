@@ -26,7 +26,9 @@ The scoring engine and insight rules are the foundation. The interesting directi
 
 **Multi-source fusion.** Garmin is first, but the architecture supports any wearable (Oura, Apple Health, Whoop, Fitbit). Different devices, same health model. The JS ports mean this can run client-side in a browser or be consumed by a native iOS/Android app.
 
-**AI coaching layer.** The rules engine generates structured insights (severity, category, body text). Feed those to an LLM and you get a conversational health coach that's grounded in your actual data — not generic advice. The insight objects are designed for this: structured enough for code, readable enough for a model.
+**AI coaching layer.** The rules engine generates structured insights (severity, category, body text). Feed those to an LLM and you get a conversational health coach that's grounded in your actual data — not generic advice. The insight objects are designed for this: structured enough for code, readable enough for a model. Open the project with Claude Code and say "how am I doing?" — the `CLAUDE.md` playbook teaches it to pull your briefing, assess where you stand, and coach you forward. No scripts to memorize, just a conversation.
+
+**Voice-first check-ins.** Pair with a speech-to-text layer (Whisper, Superwhisper, or system dictation) and your morning check-in becomes a conversation — talk to your health coach, get a read on your numbers, hear what to focus on today. The coaching voice is written to sound natural spoken aloud.
 
 ## Get Started (2 minutes)
 

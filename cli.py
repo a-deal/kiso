@@ -158,6 +158,16 @@ def cmd_pull(args):
     )
 
 
+def cmd_briefing(args):
+    """Generate a full coaching briefing (JSON snapshot of all health data)."""
+    config = load_config(args.config)
+
+    from engine.coaching.briefing import build_briefing
+    briefing = build_briefing(config)
+
+    print(json.dumps(briefing, indent=2))
+
+
 def cmd_status(args):
     """Show current data status."""
     config = load_config(args.config)
@@ -207,6 +217,10 @@ def main():
     # insights
     p_insights = sub.add_parser("insights", help="Generate health insights")
     p_insights.set_defaults(func=cmd_insights)
+
+    # briefing
+    p_briefing = sub.add_parser("briefing", help="Full coaching briefing (JSON)")
+    p_briefing.set_defaults(func=cmd_briefing)
 
     # pull
     p_pull = sub.add_parser("pull", help="Pull data from integrations")
