@@ -15,36 +15,17 @@ Specifically:
 
 All local. Zero PII in the repo. Your data stays on your machine.
 
-## The Coverage Journey
+## Why This Exists
 
-The engine scores 20 metrics. Your **coverage score** tells you how many you've filled in — and the **gap analysis** tells you exactly what's missing and what it costs to close each one.
+Most health tools tell you *what your numbers are*. None of them tell you *what you're missing*.
 
-You don't need everything on day one. Start with what you have, and the engine tells you where to invest next.
+You can have 200 biomarkers from 7 blood draws and still only be 42% covered — because nobody scored your sleep regularity, blood pressure, family history, or fasting insulin. Your glucose looks "normal" while your insulin has been compensating for a decade. Your LDL is "fine" but you've never tested ApoB or Lp(a), the markers with the strongest causal evidence for cardiovascular disease.
 
-### What gets you to 100%
+96 million Americans are prediabetic. 47% have hypertension. Half don't know it. "Average" on a US health app means "typical for a population where most people are flying blind." Average is not healthy.
 
-| Coverage | What You Need | Cost |
-|---|---|---|
-| **~20%** | Garmin watch (or any wearable) | Already own one? You're here. |
-| **~35%** | + bathroom scale + blood pressure cuff | ~$60 total |
-| **~75%** | + one blood draw (lipid panel, metabolic, CBC, thyroid, hs-CRP) | ~$100-200 via Quest/walk-in lab |
-| **~90%** | + waist circumference (tape measure) + family history + medication list | Free |
-| **100%** | + PHQ-9 mental health screen | Free (3-min questionnaire) |
+The engine scores you against real CDC population data (NHANES), not arbitrary app ranges. It tells you what you have, what you're missing, and exactly what it costs — in dollars and minutes — to close each gap. Going from 0% to 90% coverage costs under $300 and about an hour of your time.
 
-### Suggested Gear
-
-You probably own most of this already. If not, here's what closes the gaps:
-
-| Metric | Gear | Notes |
-|---|---|---|
-| RHR, HRV, Sleep, Steps, Zone 2 | **Garmin watch** (Venu, Forerunner, Fenix) | Any model with optical HR sensor. Also works with Oura, Apple Watch, WHOOP. |
-| Weight Trends | **Digital scale** | Any accurate scale. Weigh daily, the engine computes rolling averages. |
-| Blood Pressure | **Omron home BP cuff** | ~$40. Take 3 readings, log the average. Far more useful than a single office reading. |
-| Waist Circumference | **Tape measure** | $3. Measure at the navel, first thing in the morning. |
-| Labs (Lipids, Metabolic, CBC, Thyroid, hs-CRP, Lp(a)) | **Blood draw** | Quest Diagnostics walk-in or order through your doctor. A basic panel runs $30-100. Add ApoB and fasting insulin for the full picture. |
-| VO2 Max | **Your wearable** | Most GPS watches estimate this from running data. No extra gear needed. |
-
-The gap analysis in `python3 cli.py score` ranks these by information value — which $30 test or $40 device gives you the biggest jump in coverage.
+See the [Coverage Guide](docs/COVERAGE.md) for the full breakdown: what gets you to 100%, which labs to order first, and the gear that closes each gap.
 
 ## Where It's Going
 
@@ -52,7 +33,7 @@ The scoring engine and insight rules are the foundation. The interesting directi
 
 **Longitudinal intelligence.** Right now it's snapshot-based — "here's where you stand today." The next layer is time-series: how are your markers *trending* over months? Your HRV is 62ms today — is that up from 50 or down from 75? The trend changes the insight completely. Daily series pull is already built; the analysis layer is next.
 
-**Lab import + full health picture.** Lab import is live today — the engine scores lipids, metabolic panel, CBC, thyroid, hs-CRP, liver enzymes, Lp(a), ferritin, and vitamin D against NHANES population data. Drop your values into `lab_results.json` and they flow into your coverage score and coaching briefing. The next step is automated PDF parsing — feed it a Quest or Labcorp PDF and it extracts everything automatically.
+**Automated lab parsing.** Lab import works today via JSON. The next step is feeding it a Quest or Labcorp PDF directly and having it extract everything automatically — no manual data entry.
 
 **Protocol engine.** Once you have scores + trends, the next question is *what do I do about it?* Sleep regularity bad? Here's a 2-week circadian protocol. HRV declining? Here's a recovery week template. This is where the insight rules evolve into actionable plans — the bridge between "what's happening" and "what to change."
 
@@ -168,6 +149,7 @@ All personal data stays in `config.yaml` (gitignored). Insight thresholds are co
 
 ## Docs
 
+- [COVERAGE.md](docs/COVERAGE.md) — The path to 100% coverage: gear guide, lab priorities, what each metric costs
 - [ONBOARDING.md](docs/ONBOARDING.md) — Full setup walkthrough
 - [SCORING.md](docs/SCORING.md) — How the scoring engine works
 - [METRICS.md](docs/METRICS.md) — 20-metric catalog with evidence and sources
