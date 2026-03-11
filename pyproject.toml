@@ -1,17 +1,25 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "health-engine"
-version = "0.1.0"
-description = "Health intelligence engine — scoring, insights, and wearable integrations"
+version = "0.6.0"
+description = "Open-source health scoring engine — 20 clinically validated metrics, NHANES percentiles, wearable integration. Runs locally with Claude via MCP."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+keywords = ["health", "mcp", "claude", "scoring", "wearables", "nhanes"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 dependencies = [
     "numpy>=1.24",
     "pyyaml>=6.0",
+    "mcp[cli]>=1.6.0",
 ]
 
 [project.optional-dependencies]
@@ -19,7 +27,17 @@ garmin = ["garminconnect>=0.2.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-health-engine = "cli:main"
+health-engine = "mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://mybaseline.health/health-engine/"
+Repository = "https://github.com/a-deal/health-engine"
 
 [tool.setuptools.packages.find]
-include = ["engine*"]
+include = ["engine*", "mcp_server*"]
+
+[tool.setuptools.package-data]
+engine = ["data/*.json", "data/*.md", "insights/rules.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

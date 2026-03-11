@@ -144,6 +144,42 @@ def cmd_insights(args):
         print()
 
 
+def cmd_auth(args):
+    """Authenticate with a wearable service."""
+    if args.service == "garmin":
+        from engine.integrations.garmin import GarminClient
+        config = load_config(args.config)
+        garmin_cfg = config.get("garmin", {})
+        if garmin_cfg.get("email") or garmin_cfg.get("password"):
+            print(
+                "NOTE: garmin.email/password found in config.yaml — "
+                "consider removing them (credentials should not be stored in config)."
+            )
+        token_dir = garmin_cfg.get("token_dir")
+        GarminClient.auth_interactive(token_dir=token_dir)
+
+
+def cmd_import(args):
+    """Import data from wearable exports."""
+    config = load_config(args.config)
+    data_dir = Path(config.get("data_dir", "./data"))
+
+    if args.source == "apple-health":
+        from engine.integrations.apple_health import AppleHealthParser
+        parser = AppleHealthParser(data_dir=str(data_dir))
+        result = parser.parse_export(args.path, lookback_days=args.lookback_days)
+        parser.save(result)
+
+        print(f"\nApple Health import summary:")
+        for key, val in result.items():
+            if key not in ("source", "metadata", "last_updated"):
+                if val is not None:
+                    print(f"  {key}: {val}")
+                else:
+                    print(f"  {key}: no data")
+        print(f"\nSaved to {data_dir / 'apple_health_latest.json'}")
+
+
 def cmd_pull(args):
     """Pull data from Garmin Connect."""
     config = load_config(args.config)
@@ -168,6 +204,16 @@ def cmd_briefing(args):
     print(json.dumps(briefing, indent=2))
 
 
+def cmd_checkin(args):
+    """Morning check-in — coached narrative from your health data."""
+    config = load_config(args.config)
+
+    from engine.coaching.briefing import build_briefing
+    briefing = build_briefing(config)
+
+    _render_checkin(briefing, config)
+
+
 def cmd_status(args):
     """Show current data status."""
     config = load_config(args.config)
@@ -181,6 +227,7 @@ def cmd_status(args):
         ("garmin_daily.json", "Daily series (trends)"),
         ("garmin_daily_burn.json", "Daily calorie burn"),
         ("garmin_workouts.json", "Workout history"),
+        ("apple_health_latest.json", "Apple Health metrics"),
         ("weight_log.csv", "Weight log"),
         ("meal_log.csv", "Meal log"),
         ("strength_log.csv", "Strength log"),
@@ -222,6 +269,22 @@ def main():
     p_briefing = sub.add_parser("briefing", help="Full coaching briefing (JSON)")
     p_briefing.set_defaults(func=cmd_briefing)
 
+    # checkin
+    p_checkin = sub.add_parser("checkin", help="Morning check-in (coached narrative)")
+    p_checkin.set_defaults(func=cmd_checkin)
+
+    # auth
+    p_auth = sub.add_parser("auth", help="Authenticate with a wearable service")
+    p_auth.add_argument("service", choices=["garmin"], help="Service to authenticate")
+    p_auth.set_defaults(func=cmd_auth)
+
+    # import
+    p_import = sub.add_parser("import", help="Import wearable data exports")
+    p_import.add_argument("source", choices=["apple-health"], help="Data source")
+    p_import.add_argument("path", help="Path to export file (ZIP or XML)")
+    p_import.add_argument("--lookback-days", type=int, default=90, help="Days of data to import")
+    p_import.set_defaults(func=cmd_import)
+
     # pull
     p_pull = sub.add_parser("pull", help="Pull data from integrations")
     p_pull.add_argument("source", choices=["garmin"], help="Data source")
@@ -241,6 +304,234 @@ def main():
         sys.exit(1)
 
     args.func(args)
+
+
+def _render_checkin(b: dict, config: dict):
+    """Render briefing as a coached morning check-in."""
+    from datetime import datetime
+
+    today = datetime.now()
+    day_name = today.strftime("%A")
+
+    # --- Header with coached greeting ---
+    print()
+    print(f"  {day_name} check-in")
+    print(f"  {'─' * 40}")
+
+    # Build a contextual greeting
+    weight = b.get("weight", {})
+    current_w = weight.get("current")
+    rate = weight.get("weekly_rate")
+    remaining = weight.get("remaining")
+    garmin_data = b.get("garmin", {})
+    hrv_val = garmin_data.get("hrv_rmssd_avg")
+    sleep_val = garmin_data.get("sleep_duration_avg")
+
+    greeting_parts = []
+    if current_w and remaining:
+        greeting_parts.append(f"{current_w} this morning — {remaining:.0f} lbs from target.")
+    if rate is not None:
+        if rate > 0.3:
+            greeting_parts.append("Weight's moving the wrong direction this week.")
+        elif rate > -0.2:
+            greeting_parts.append("Rate's stalled — let's look at why.")
+        else:
+            greeting_parts.append("Trending in the right direction.")
+    if sleep_val and sleep_val < 7.0:
+        greeting_parts.append(f"Sleep's at {sleep_val:.1f} hours — that's going to show up.")
+    if hrv_val and hrv_val > 60:
+        greeting_parts.append("HRV holding strong though.")
+
+    # --- Protocol progress (before greeting) ---
+    protocols = b.get("protocols", [])
+    if protocols:
+        for proto in protocols:
+            hit = proto["last_night"]["hit"]
+            total = proto["last_night"]["total"]
+            day = proto["day"]
+            phase = proto.get("phase", "")
+            name = proto["name"]
+
+            print(f"  Night {day} of {name} — {hit}/{total} habits")
+            if phase:
+                week = proto["week"]
+                print(f"  Week {week}: {phase}")
+            nudge = proto.get("top_nudge")
+            if nudge:
+                print(f"  >> Lock in: {nudge['label'].lower()}. {nudge['nudge']}")
+            print()
+
+    if greeting_parts:
+        print()
+        greeting = " ".join(greeting_parts)
+        # Word wrap the greeting
+        words = greeting.split()
+        line = "  "
+        for word in words:
+            if len(line) + len(word) + 1 > 72:
+                print(line)
+                line = "  " + word
+            else:
+                line += (" " if line.strip() else "") + word
+        if line.strip():
+            print(line)
+    print()
+
+    # --- Vitals snapshot ---
+    garmin = b.get("garmin", {})
+    score = b.get("score", {})
+
+    rhr = garmin.get("resting_hr")
+    hrv = garmin.get("hrv_rmssd_avg")
+    sleep = garmin.get("sleep_duration_avg")
+    steps = garmin.get("daily_steps_avg")
+    zone2 = garmin.get("zone2_min_per_week")
+    coverage = score.get("coverage")
+
+    vitals_parts = []
+    if rhr:
+        vitals_parts.append(f"RHR {rhr:.0f}")
+    if hrv:
+        vitals_parts.append(f"HRV {hrv:.0f}")
+    if sleep:
+        vitals_parts.append(f"Sleep {sleep:.1f}h")
+    if steps:
+        vitals_parts.append(f"{steps:,.0f} steps")
+
+    if vitals_parts:
+        print(f"  Vitals    {' · '.join(vitals_parts)}")
+
+    # BP
+    bp_data = b.get("score", {}).get("results", [])
+    bp_result = next((r for r in bp_data if r["name"] == "Blood Pressure"), None)
+    if bp_result and bp_result.get("value"):
+        unit = bp_result.get("unit", "")
+        # unit is like "mmHg/66" — extract diastolic
+        print(f"  BP        {int(bp_result['value'])}/{unit.split('/')[-1]}")
+
+    # Zone 2
+    if zone2:
+        print(f"  Zone 2    {zone2} min/week")
+
+    # Coverage
+    if coverage:
+        scored = len(score.get("results", []))
+        gaps = score.get("gap_count", 0)
+        print(f"  Coverage  {coverage}% ({scored} scored, {gaps} gaps)")
+
+    print()
+
+    # --- Weight & cut progress ---
+    weight = b.get("weight", {})
+    if weight:
+        current = weight.get("current")
+        target = config.get("targets", {}).get("weight_lbs")
+        rate = weight.get("weekly_rate")
+        remaining = weight.get("remaining")
+
+        if current:
+            line = f"  Weight    {current} lbs"
+            if remaining:
+                line += f"  →  {target} lbs ({remaining} to go)"
+            print(line)
+        if rate is not None:
+            assessment = weight.get("rate_assessment", "")
+            marker = ""
+            if assessment == "too_slow":
+                marker = " ← stalled"
+            elif assessment == "too_fast":
+                marker = " ← aggressive"
+            print(f"  Rate      {rate:+.1f} lbs/week{marker}")
+        print()
+
+    # --- Labs highlight (top scores) ---
+    results = score.get("results", [])
+    if results:
+        optimal = [r for r in results if r.get("standing") == "Optimal"]
+        concerning = [r for r in results if r.get("standing") in ("Concerning", "Poor")]
+
+        if optimal:
+            names = ", ".join(r["name"] for r in optimal[:4])
+            print(f"  Strong    {names}")
+        if concerning:
+            names = ", ".join(r["name"] for r in concerning)
+            print(f"  Watch     {names}")
+
+        labs_info = b.get("labs", {})
+        if labs_info.get("last_draw"):
+            draw_date = datetime.strptime(labs_info["last_draw"], "%Y-%m-%d")
+            days_ago = (today - draw_date).days
+            print(f"  Last labs {labs_info['last_draw']} ({days_ago}d ago)")
+        print()
+
+    # --- Insights (coached) ---
+    insights = b.get("insights", [])
+    coaching = b.get("coaching_signals", [])
+    all_signals = coaching + insights  # coaching signals first
+
+    if all_signals:
+        print(f"  Insights")
+        print(f"  {'─' * 40}")
+        severity_icons = {"critical": "!!", "warning": " !", "positive": " +", "neutral": " ~"}
+        for sig in all_signals:
+            icon = severity_icons.get(sig["severity"], "  ")
+            print(f"  [{icon}] {sig['title']}")
+            # Wrap body text
+            body = sig["body"]
+            words = body.split()
+            line = "      "
+            for word in words:
+                if len(line) + len(word) + 1 > 72:
+                    print(line)
+                    line = "      " + word
+                else:
+                    line += (" " if line.strip() else "") + word
+            if line.strip():
+                print(line)
+            print()
+
+    # --- Nutrition (today so far) ---
+    nutrition = b.get("nutrition", {})
+    if nutrition:
+        totals = nutrition.get("today_totals", {})
+        remaining = nutrition.get("remaining", {})
+        protein = totals.get("protein_g", 0)
+        cals = totals.get("calories", 0)
+        prot_remaining = remaining.get("protein_g")
+        cal_remaining = remaining.get("calories")
+
+        print(f"  Nutrition (today)")
+        print(f"  {'─' * 40}")
+        line = f"  Logged    {protein:.0f}g protein · {cals:.0f} cal"
+        print(line)
+        if prot_remaining is not None and cal_remaining is not None:
+            print(f"  Left      {prot_remaining:.0f}g protein · {cal_remaining:.0f} cal")
+        warn = nutrition.get("protein_warning")
+        if warn:
+            print(f"  [ !] {warn}")
+        print()
+
+    # --- Habits ---
+    habits = b.get("habits", {})
+    if habits:
+        active = {k: v for k, v in habits.items() if v.get("current_streak", 0) > 0}
+        if active:
+            print(f"  Habits")
+            print(f"  {'─' * 40}")
+            for name, data in sorted(active.items(), key=lambda x: -x[1]["current_streak"]):
+                streak_val = data["current_streak"]
+                label = name.replace("_", " ")
+                print(f"  {label:<28} {streak_val}d streak")
+            print()
+
+    # --- Top gaps (what to measure next) ---
+    gaps = score.get("top_gaps", [])
+    if gaps:
+        print(f"  Gaps (highest leverage)")
+        print(f"  {'─' * 40}")
+        for g in gaps[:3]:
+            print(f"  {g['name']:<28} {g['cost']}")
+        print()
 
 
 if __name__ == "__main__":

@@ -47,22 +47,29 @@ def build_briefing(config: dict) -> dict:
         "data_available": {},
     }
 
-    # --- Garmin data ---
+    # --- Wearable data (Garmin preferred, Apple Health fallback) ---
     garmin = _load_json(data_dir / "garmin_latest.json")
+    apple_health = _load_json(data_dir / "apple_health_latest.json")
     garmin_daily = _load_json(data_dir / "garmin_daily.json")
     briefing["data_available"]["garmin"] = garmin is not None
+    briefing["data_available"]["apple_health"] = apple_health is not None
     briefing["data_available"]["garmin_daily"] = garmin_daily is not None
 
-    if garmin:
+    # Use Garmin if available, otherwise fall back to Apple Health
+    wearable = garmin or apple_health
+    wearable_source = "garmin" if garmin else ("apple_health" if apple_health else None)
+
+    if wearable:
+        briefing["wearable_source"] = wearable_source
         briefing["garmin"] = {
-            "last_updated": garmin.get("last_updated"),
-            "hrv_rmssd_avg": garmin.get("hrv_rmssd_avg"),
-            "resting_hr": garmin.get("resting_hr"),
-            "sleep_duration_avg": garmin.get("sleep_duration_avg"),
-            "sleep_regularity_stddev": garmin.get("sleep_regularity_stddev"),
-            "vo2_max": garmin.get("vo2_max"),
-            "daily_steps_avg": garmin.get("daily_steps_avg"),
-            "zone2_min_per_week": garmin.get("zone2_min_per_week"),
+            "last_updated": wearable.get("last_updated"),
+            "hrv_rmssd_avg": wearable.get("hrv_rmssd_avg"),
+            "resting_hr": wearable.get("resting_hr"),
+            "sleep_duration_avg": wearable.get("sleep_duration_avg"),
+            "sleep_regularity_stddev": wearable.get("sleep_regularity_stddev"),
+            "vo2_max": wearable.get("vo2_max"),
+            "daily_steps_avg": wearable.get("daily_steps_avg"),
+            "zone2_min_per_week": wearable.get("zone2_min_per_week"),
         }
 
     # --- Score ---
@@ -72,14 +79,14 @@ def build_briefing(config: dict) -> dict:
     )
     profile = UserProfile(demographics=demo)
 
-    if garmin:
-        profile.resting_hr = garmin.get("resting_hr")
-        profile.daily_steps_avg = garmin.get("daily_steps_avg")
-        profile.sleep_regularity_stddev = garmin.get("sleep_regularity_stddev")
-        profile.sleep_duration_avg = garmin.get("sleep_duration_avg")
-        profile.vo2_max = garmin.get("vo2_max")
-        profile.hrv_rmssd_avg = garmin.get("hrv_rmssd_avg")
-        profile.zone2_min_per_week = garmin.get("zone2_min_per_week")
+    if wearable:
+        profile.resting_hr = wearable.get("resting_hr")
+        profile.daily_steps_avg = wearable.get("daily_steps_avg")
+        profile.sleep_regularity_stddev = wearable.get("sleep_regularity_stddev")
+        profile.sleep_duration_avg = wearable.get("sleep_duration_avg")
+        profile.vo2_max = wearable.get("vo2_max")
+        profile.hrv_rmssd_avg = wearable.get("hrv_rmssd_avg")
+        profile.zone2_min_per_week = wearable.get("zone2_min_per_week")
 
     # Incorporate latest BP reading into profile for scoring
     bp_data_for_score = _load_bp_log(data_dir)
@@ -133,12 +140,12 @@ def build_briefing(config: dict) -> dict:
     if labs:
         metric_dates.update(_extract_lab_dates(labs))
         metric_counts.update(_count_lab_readings(labs))
-    if garmin:
-        garmin_date = garmin.get("last_updated", "")[:10]  # ISO date portion
-        if garmin_date:
+    if wearable:
+        wearable_date = wearable.get("last_updated", "")[:10]  # ISO date portion
+        if wearable_date:
             for key in ("resting_hr", "daily_steps_avg", "sleep_regularity_stddev",
                         "sleep_duration_avg", "vo2_max", "hrv_rmssd_avg", "zone2_min_per_week"):
-                metric_dates[key] = garmin_date
+                metric_dates[key] = wearable_date
     if bp_data_for_score:
         bp_rows_raw = read_csv(data_dir / "bp_log.csv")
         if bp_rows_raw:
@@ -178,14 +185,14 @@ def build_briefing(config: dict) -> dict:
     rules = load_rules(rules_file) if rules_file else load_rules()
 
     insights = generate_insights(
-        garmin=garmin,
+        garmin=wearable,
         weights=weights_data,
         bp_readings=bp_data,
         trends=trends,
         rules=rules,
     )
     # Pattern detection — cross-metric interaction signals
-    patterns = detect_patterns(profile, garmin=garmin)
+    patterns = detect_patterns(profile, garmin=wearable)
     all_insights = insights + patterns
 
     briefing["insights"] = [
@@ -314,7 +321,7 @@ def build_briefing(config: dict) -> dict:
                 protocol=proto,
                 started=started,
                 habit_data=habit_data,
-                garmin=garmin,
+                garmin=wearable,
                 as_of=today,
             )
             progress["priority"] = entry.get("priority", 99)
@@ -326,8 +333,8 @@ def build_briefing(config: dict) -> dict:
     # --- Coaching signals (compound) ---
     coaching_signals = []
 
-    if garmin:
-        sleep_debt = assess_sleep_debt(garmin.get("sleep_duration_avg"))
+    if wearable:
+        sleep_debt = assess_sleep_debt(wearable.get("sleep_duration_avg"))
         if sleep_debt:
             coaching_signals.append({
                 "severity": sleep_debt.severity,
@@ -339,8 +346,8 @@ def build_briefing(config: dict) -> dict:
     if rate is not None:
         deficit = assess_deficit_impact(
             rate,
-            garmin.get("hrv_rmssd_avg") if garmin else None,
-            garmin.get("resting_hr") if garmin else None,
+            wearable.get("hrv_rmssd_avg") if wearable else None,
+            wearable.get("resting_hr") if wearable else None,
         )
         if deficit:
             coaching_signals.append({

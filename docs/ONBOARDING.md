@@ -1,46 +1,74 @@
 # Onboarding — Get Running in 5 Minutes
 
+## How It Works
+
+Health Engine is an always-on health layer, not a separate app. Once set up, it's available in every Claude conversation — Claude Desktop, Claude Code, any MCP client. Your data lives locally and persists across chats.
+
+There are two moments:
+
+1. **First time (onboard)** — "Set me up." Claude walks you through all 20 health dimensions, collects your basics, and shows you exactly where to start. Takes 5 minutes.
+2. **Every time after (check-in)** — "How am I doing?" Claude reads your latest data and coaches you forward. Each new chat picks up where the last left off.
+
+You don't need to re-onboard. The `onboard` tool is for first-time setup and periodic reassessment ("what am I still missing?"). Daily use is just `checkin`.
+
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11+ (with [uv](https://docs.astral.sh/uv/) recommended)
 - A Garmin Connect account (optional, for wearable data)
 
 ## Step 1: Install
 
 ```bash
-git clone <repo-url> && cd health-engine
-python3 -m pip install -e .
+git clone https://github.com/a-deal/health-engine.git
+cd health-engine
+uv sync                          # or: python3 -m pip install -e .
+uv sync --extra garmin           # optional: Garmin integration
 ```
 
-For Garmin integration:
-```bash
-python3 -m pip install -e ".[garmin]"
+## Step 2: Connect to Claude
+
+Add to your MCP config (`~/.mcp.json` for Claude Code, or Claude Desktop settings):
+
+```json
+{
+  "mcpServers": {
+    "health-engine": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/health-engine", "python3", "-m", "mcp_server.server"],
+      "cwd": "/path/to/health-engine"
+    }
+  }
+}
 ```
 
-## Step 2: Configure
+Restart Claude. That's it — the tools are now available in every conversation.
 
-```bash
-cp config.example.yaml config.yaml
-```
+## Step 3: Say "Set me up"
 
-Edit `config.yaml`:
-- Set your age and sex
-- Set macro/calorie targets (optional)
-- Add Garmin credentials if you have a Garmin wearable
+Claude calls the `onboard` tool and walks you through:
 
-## Step 3: Score
+- **Your coverage map** — all 20 health dimensions, scored or missing
+- **What you have** — any data it detects (Garmin, weight logs, lab results)
+- **What you're missing** — ranked by leverage, with exact cost and effort
+- **Your basics** — age, sex, family history, medications (collected conversationally via `setup_profile`)
 
-Score with defaults (empty profile shows your gaps):
-```bash
-python3 cli.py score --config config.yaml
-```
+After onboarding, your `config.yaml` has your profile and your `data/` directory is ready for incoming data.
 
-Score with a profile JSON:
-```bash
-python3 cli.py score --config config.yaml --profile tests/fixtures/sample_profile.json
-```
+## Step 4: Start Tracking
 
-## Step 4: Pull Garmin Data (optional)
+The easiest wins after onboarding:
+
+| What | How | Coverage boost |
+|------|-----|---------------|
+| Family history | "No family history of early heart disease" | +7% |
+| Waist measurement | "My waist is 34 inches" | +6% |
+| Blood pressure | Buy an Omron cuff ($40), log a reading | +9% |
+| Medications | "I take vitamin D and creatine" | +5% |
+| Weight | "I weighed 192 this morning" | +2% |
+
+Each of these is free or nearly free and can be logged conversationally — just tell Claude the number.
+
+## Step 5: Pull Garmin Data (optional)
 
 ```bash
 # Set credentials (first time only)
@@ -48,30 +76,25 @@ export GARMIN_EMAIL="you@example.com"
 export GARMIN_PASSWORD="your-password"
 
 # Pull metrics
-python3 cli.py pull garmin --config config.yaml
+python3 cli.py pull garmin
 
-# Pull with workout history
-python3 cli.py pull garmin --config config.yaml --workouts
-
-# Pull with 90-day trend data
-python3 cli.py pull garmin --config config.yaml --history
+# Pull with 90-day trends + workout details
+python3 cli.py pull garmin --history --workouts
 ```
 
-## Step 5: Generate Insights
+Or tell Claude: "Pull my Garmin data" (if credentials are in config).
 
-```bash
-python3 cli.py insights --config config.yaml
-```
+## After Onboarding
 
-This reads whatever data is in your `data/` directory (Garmin JSON, weight CSVs, etc.) and generates actionable health insights.
+Every new conversation, just talk:
 
-## Step 6: Check Status
+- **"How am I doing?"** → Full coaching snapshot
+- **"192 this morning"** → Weight logged, trend updated
+- **"128/82"** → BP logged
+- **"What should I measure next?"** → Gap analysis with ranked priorities
+- **"Show me my scores"** → Deep dive into all 20 dimensions
 
-```bash
-python3 cli.py status --config config.yaml
-```
-
-Shows which data files are present and when they were last updated.
+No commands to remember. No dashboard to check. The data is always there, the conversation is the interface.
 
 ## Data Files
 
@@ -85,10 +108,12 @@ All personal data lives in `data/` (gitignored). Supported formats:
 | `meal_log.csv` | CSV | Meal entries: `date,time_of_day,description,protein_g,carbs_g,fat_g,calories` |
 | `strength_log.csv` | CSV | Lift entries: `date,exercise,weight_lbs,reps,rpe,notes` |
 | `bp_log.csv` | CSV | BP readings: `date,systolic,diastolic` |
+| `daily_habits.csv` | CSV | Habit tracking: `date,habit1,habit2,...` (y/n values) |
+| `lab_results.json` | JSON | Lab draws with biomarker values |
 
 ## Customizing Thresholds
 
-Edit `engine/insights/rules.yaml` to adjust insight thresholds for your needs. For example, if you want HRV warnings at different levels:
+Edit `engine/insights/rules.yaml` to adjust insight thresholds for your needs:
 
 ```yaml
 hrv:
@@ -97,21 +122,11 @@ hrv:
   healthy_high: 60
 ```
 
-## Using as a Python Library
+## CLI (for power users)
 
-```python
-from engine.models import Demographics, UserProfile
-from engine.scoring.engine import score_profile
-from engine.insights.engine import generate_insights
-
-# Score a profile
-profile = UserProfile(
-    demographics=Demographics(age=35, sex="M"),
-    resting_hr=52,
-    hrv_rmssd_avg=62,
-)
-output = score_profile(profile)
-
-# Generate insights
-insights = generate_insights(garmin={"resting_hr": 52, "hrv_rmssd_avg": 62})
+```bash
+python3 cli.py score                 # Score profile (shows gaps)
+python3 cli.py insights              # Generate health insights
+python3 cli.py briefing              # Full coaching snapshot as JSON
+python3 cli.py status                # Check what data files exist
 ```

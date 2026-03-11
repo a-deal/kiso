@@ -10,8 +10,7 @@ targets:
   calories_rest: 2100
 
 garmin:
-  email: ""        # your Garmin Connect email
-  password: ""     # your Garmin Connect password (or use GARMIN_EMAIL / GARMIN_PASSWORD env vars)
+  # Run `python3 cli.py auth garmin` to authenticate (tokens cached, credentials never stored)
   token_dir: ~/.config/health-engine/garmin-tokens
 
 data_dir: ./data   # where your CSVs live (gitignored)

@@ -1,13 +1,15 @@
 """Garmin Connect integration — pull health metrics for scoring.
 
 Requires: pip install garminconnect
-Credentials: GARMIN_EMAIL/GARMIN_PASSWORD env vars, or pass via config.
+Auth: Run `python3 cli.py auth garmin` for interactive login (tokens cached).
 """
 
 import csv
+import getpass
 import json
 import os
 import statistics
+import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -51,6 +53,13 @@ class GarminClient:
     def from_config(cls, config: dict) -> "GarminClient":
         """Create a GarminClient from a parsed config.yaml dict."""
         garmin_cfg = config.get("garmin", {})
+        # Deprecation warning for plaintext credentials in config
+        if garmin_cfg.get("email") or garmin_cfg.get("password"):
+            print(
+                "WARNING: garmin.email/password in config.yaml is deprecated. "
+                "Remove them and run `python3 cli.py auth garmin` instead.",
+                file=sys.stderr,
+            )
         return cls(
             email=garmin_cfg.get("email") or None,
             password=garmin_cfg.get("password") or None,
@@ -58,6 +67,30 @@ class GarminClient:
             exercise_map=config.get("exercise_name_map"),
             data_dir=config.get("data_dir"),
         )
+
+    @classmethod
+    def has_tokens(cls, token_dir: str | None = None) -> bool:
+        """Check if cached garth token files exist."""
+        td = Path(token_dir or os.path.expanduser("~/.config/health-engine/garmin-tokens"))
+        # garth stores oauth1_token.json and oauth2_token.json
+        return td.exists() and any(td.iterdir())
+
+    @classmethod
+    def auth_interactive(cls, token_dir: str | None = None) -> bool:
+        """Interactive CLI auth — prompts for email/password, caches tokens."""
+        from garminconnect import Garmin
+
+        td = Path(token_dir or os.path.expanduser("~/.config/health-engine/garmin-tokens"))
+        email = input("Garmin Connect email: ").strip()
+        password = getpass.getpass("Garmin Connect password: ")
+
+        print("Logging in to Garmin Connect...")
+        client = Garmin(email, password)
+        client.login()
+        td.mkdir(parents=True, exist_ok=True)
+        client.garth.dump(str(td))
+        print("Authenticated and tokens cached. Credentials are NOT stored.")
+        return True
 
     def connect(self):
         """Authenticate with Garmin Connect."""
@@ -81,8 +114,7 @@ class GarminClient:
 
         if not self.email or not self.password:
             raise RuntimeError(
-                "Set GARMIN_EMAIL and GARMIN_PASSWORD environment variables. "
-                "(Only needed for first login — tokens are cached after that.)"
+                "No tokens found. Run `python3 cli.py auth garmin` to authenticate."
             )
 
         print("Logging in to Garmin Connect...")

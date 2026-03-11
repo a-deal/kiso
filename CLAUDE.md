@@ -55,7 +55,35 @@ python3 cli.py pull garmin                      # Latest metrics
 python3 cli.py pull garmin --history --workouts  # + 90-day trends + workout details
 ```
 
-This requires Garmin credentials in `config.yaml` or `GARMIN_EMAIL`/`GARMIN_PASSWORD` env vars.
+### Garmin Authentication
+
+Garmin uses interactive CLI auth — credentials are never stored in config:
+
+```bash
+python3 cli.py auth garmin    # Prompts for email/password, caches tokens
+```
+
+Tokens are cached at `~/.config/health-engine/garmin-tokens`. If you see "garmin.email/password in config.yaml is deprecated", remove those fields from config.yaml and use `auth garmin` instead.
+
+### Apple Health Import
+
+For iPhone/Apple Watch users, import via Apple Health export:
+
+1. On iPhone: Settings → Health → Export All Health Data → save ZIP
+2. Transfer the ZIP to your machine
+3. Run:
+```bash
+python3 cli.py import apple-health /path/to/export.zip
+python3 cli.py import apple-health /path/to/export.zip --lookback-days 180  # custom window
+```
+
+This parses RHR, HRV (SDNN), steps, VO2 max, and sleep data via SAX streaming (handles large exports). Output goes to `apple_health_latest.json` with the same schema as Garmin data. If both Garmin and Apple Health data exist, Garmin takes priority.
+
+### Dashboard
+
+Open the health dashboard in a browser (refreshes briefing data first):
+- MCP tool: `open_dashboard` — call it or ask to "show dashboard"
+- The dashboard reads `briefing.json` from the data directory
 
 ## Getting Someone Set Up
 
@@ -84,7 +112,8 @@ engine/
 ├── insights/engine.py     # generate_insights() — threshold-based coaching rules
 ├── insights/coaching.py   # Compound signals: sleep debt, deficit impact, taper readiness
 ├── coaching/briefing.py   # build_briefing() — assembles everything into one snapshot
-├── integrations/garmin.py # GarminClient — pull from Garmin Connect
+├── integrations/garmin.py       # GarminClient — pull from Garmin Connect
+├── integrations/apple_health.py # AppleHealthParser — parse Apple Health XML/ZIP exports
 ├── tracking/              # weight, nutrition, strength, habits
 └── data/                  # NHANES percentile tables (ships with package)
 ```
@@ -100,7 +129,7 @@ Config: `config.yaml` (gitignored). Data: `data/` (gitignored). Thresholds: `eng
 
 ## Explaining the Methodology
 
-When a user asks "why do you measure this?" or "how does scoring work?", reference `docs/METHODOLOGY.md` — it explains the reasoning behind every scoring decision in plain language. Key points to convey:
+When a user asks "why do you measure this?" or "how does scoring work?", read the `health-engine://methodology` MCP resource (or reference `docs/METHODOLOGY.md` directly). It explains the reasoning behind every scoring decision in plain language. Key points to convey:
 
 - **Clinical zones** (Optimal/Healthy/Borderline/Elevated) are the primary signal, sourced from AHA, ADA, ESC, etc. They answer "am I healthy?"
 - **Population percentiles** are secondary context. The 50th percentile = median American (42% obese, 38% prediabetic). Better than average ≠ healthy.

@@ -50,3 +50,37 @@ def test_from_config():
     assert str(client.token_dir) == "/tmp/tokens"
     assert client.exercise_map == {"front squat": "squat"}
     assert str(client.data_dir) == "/tmp/data"
+
+
+def test_has_tokens_no_dir(tmp_path):
+    """has_tokens returns False when token dir doesn't exist."""
+    assert GarminClient.has_tokens(token_dir=str(tmp_path / "nonexistent")) is False
+
+
+def test_has_tokens_with_dir(tmp_path):
+    """has_tokens returns True when token dir has files."""
+    token_dir = tmp_path / "tokens"
+    token_dir.mkdir()
+    (token_dir / "oauth1_token.json").write_text("{}")
+    assert GarminClient.has_tokens(token_dir=str(token_dir)) is True
+
+
+def test_has_tokens_empty_dir(tmp_path):
+    """has_tokens returns False when token dir exists but is empty."""
+    token_dir = tmp_path / "tokens"
+    token_dir.mkdir()
+    assert GarminClient.has_tokens(token_dir=str(token_dir)) is False
+
+
+def test_deprecation_warning(capsys):
+    """from_config prints deprecation warning when credentials are in config."""
+    config = {
+        "garmin": {
+            "email": "test@example.com",
+            "password": "secret",
+            "token_dir": "/tmp/tokens",
+        },
+    }
+    GarminClient.from_config(config)
+    captured = capsys.readouterr()
+    assert "deprecated" in captured.err.lower()
