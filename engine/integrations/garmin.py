@@ -44,7 +44,7 @@ class GarminClient:
     ):
         self.email = email or os.environ.get("GARMIN_EMAIL")
         self.password = password or os.environ.get("GARMIN_PASSWORD")
-        self.token_dir = Path(token_dir or os.path.expanduser("~/.config/health-engine/garmin-tokens"))
+        self.token_dir = Path(os.path.expanduser(token_dir or "~/.config/health-engine/garmin-tokens"))
         self.exercise_map = exercise_map or DEFAULT_EXERCISE_MAP
         self.data_dir = Path(data_dir or "./data")
         self._client = None
@@ -97,7 +97,7 @@ class GarminClient:
         from garminconnect import Garmin
 
         # Try cached tokens first
-        if self.token_dir.exists():
+        if self.token_dir.exists() and any(self.token_dir.iterdir()):
             try:
                 client = Garmin()
                 client.garth.load(str(self.token_dir))
@@ -106,11 +106,13 @@ class GarminClient:
                       or client.garth.profile.get("profileId"))
                 if dn:
                     client.display_name = dn
+                else:
+                    raise RuntimeError("No display name in cached profile")
                 print("Authenticated with cached token.")
                 self._client = client
                 return client
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Cached token load failed: {e}", file=sys.stderr)
 
         if not self.email or not self.password:
             raise RuntimeError(
@@ -315,15 +317,18 @@ class GarminClient:
             return None
 
     def pull_daily_series(self, days=90) -> list[dict]:
-        """Pull daily RHR + HRV time series for trend analysis."""
+        """Pull daily RHR + HRV + sleep time series for trend analysis."""
         series = []
         today = date.today()
-        print(f"\n  Pulling {days}-day daily series (RHR + HRV)...")
+        print(f"\n  Pulling {days}-day daily series (RHR + HRV + sleep)...")
 
         for i in range(days):
             d = today - timedelta(days=i)
             d_str = d.isoformat()
-            entry = {"date": d_str, "rhr": None, "hrv": None, "steps": None}
+            entry = {
+                "date": d_str, "rhr": None, "hrv": None, "steps": None,
+                "sleep_hrs": None, "sleep_start": None, "sleep_end": None,
+            }
 
             try:
                 stats = self.client.get_stats(d_str)
@@ -361,13 +366,31 @@ class GarminClient:
             except Exception:
                 pass
 
+            try:
+                sleep = self.client.get_sleep_data(d_str)
+                if sleep:
+                    dto = sleep.get("dailySleepDTO", {})
+                    secs = dto.get("sleepTimeSeconds")
+                    if secs and isinstance(secs, (int, float)) and secs > 0:
+                        entry["sleep_hrs"] = round(secs / 3600, 1)
+                    ts = dto.get("sleepStartTimestampLocal")
+                    if ts:
+                        start_dt = datetime.fromtimestamp(ts / 1000)
+                        entry["sleep_start"] = start_dt.strftime("%H:%M")
+                        if secs and secs > 0:
+                            end_dt = start_dt + timedelta(seconds=secs)
+                            entry["sleep_end"] = end_dt.strftime("%H:%M")
+            except Exception:
+                pass
+
             series.append(entry)
             time.sleep(0.3)
 
         series.reverse()
         filled_rhr = sum(1 for e in series if e["rhr"] is not None)
         filled_hrv = sum(1 for e in series if e["hrv"] is not None)
-        print(f"  Daily series: {filled_rhr} RHR days, {filled_hrv} HRV days (of {days})")
+        filled_sleep = sum(1 for e in series if e["sleep_hrs"] is not None)
+        print(f"  Daily series: {filled_rhr} RHR, {filled_hrv} HRV, {filled_sleep} sleep days (of {days})")
         return series
 
     def normalize_exercise(self, name: str) -> str:
@@ -515,17 +538,22 @@ class GarminClient:
             "zone2_min_per_week": zone2,
         }
 
-        # Save to data dir
+        # Save to data dir — only if we actually got data
         self.data_dir.mkdir(parents=True, exist_ok=True)
         out_path = self.data_dir / "garmin_latest.json"
-        with open(out_path, "w") as f:
-            json.dump(garmin_data, f, indent=2)
-        print(f"\nSaved to {out_path}")
+        metric_keys = [k for k in garmin_data if k != "last_updated"]
+        filled = sum(1 for k in metric_keys if garmin_data[k] is not None)
 
-        filled = sum(1 for v in garmin_data.values() if v is not None)
-        print(f"\n{filled}/{len(garmin_data)} metrics pulled successfully.")
+        if filled > 0:
+            with open(out_path, "w") as f:
+                json.dump(garmin_data, f, indent=2)
+            print(f"\nSaved to {out_path}")
+        else:
+            print(f"\nNo metrics retrieved — keeping existing {out_path.name} unchanged.")
 
-        missing = [k for k, v in garmin_data.items() if v is None]
+        print(f"\n{filled}/{len(metric_keys)} metrics pulled successfully.")
+
+        missing = [k for k in metric_keys if garmin_data[k] is None]
         if missing:
             print(f"Missing: {', '.join(missing)}")
 
@@ -562,8 +590,15 @@ class GarminClient:
         if history:
             series = self.pull_daily_series(days=history_days)
             series_path = self.data_dir / "garmin_daily.json"
-            with open(series_path, "w") as f:
-                json.dump(series, f, indent=2)
-            print(f"Saved daily series to {series_path}")
+            has_any_data = any(
+                e.get("rhr") is not None or e.get("hrv") is not None or e.get("sleep_hrs") is not None
+                for e in series
+            )
+            if has_any_data:
+                with open(series_path, "w") as f:
+                    json.dump(series, f, indent=2)
+                print(f"Saved daily series to {series_path}")
+            else:
+                print(f"No daily data retrieved — keeping existing {series_path.name} unchanged.")
 
         return garmin_data

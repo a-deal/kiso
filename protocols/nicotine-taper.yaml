@@ -1,0 +1,35 @@
+# Nicotine Taper Protocol
+# Progressive cutoff time reduction
+
+name: Nicotine Taper
+description: Gradual nicotine reduction via earlier daily cutoff times.
+
+habits:
+  - id: nicotine_cutoff
+    label: Nicotine cutoff hit
+    priority: 1
+    nudge: "Hit your cutoff time today. Each phase gets earlier — trust the process."
+
+phases:
+  - name: "8pm cutoff"
+    weeks: [1, 2]
+    focus: "Establish the habit of having a hard stop. 8pm cutoff."
+    cutoff_time: "20:00"
+  - name: "6pm cutoff"
+    weeks: [3, 4]
+    focus: "Moving cutoff earlier. 6pm — gives your body 5+ hours before sleep."
+    cutoff_time: "18:00"
+  - name: "4pm cutoff"
+    weeks: [5, 6]
+    focus: "Afternoon cutoff. Nicotine half-life means negligible levels by bedtime."
+    cutoff_time: "16:00"
+  - name: "Noon cutoff / quit"
+    weeks: [7, 8]
+    focus: "Final phase. Noon cutoff or full elimination."
+    cutoff_time: "12:00"
+
+outcome_metrics:
+  - id: sleep_duration_avg
+    source: garmin
+    target: 7.5
+    unit: hours

@@ -1,0 +1,51 @@
+# Hair Recovery Protocol
+# Oral-only phase: establish drug baseline before adding mechanical interventions
+
+name: Hair Recovery
+description: >
+  Finasteride 1.2mg + oral minoxidil 3mg (HIMS chewable), no microneedling.
+  Let drugs establish baseline before adding mechanical. Expect shedding
+  phase through month 3-4 (resolving ~April). Monthly photo checkpoints.
+  History: 0.25mg sublingual fin for months → noticed thinning Nov 2025 →
+  stayed on low dose until mid-Jan 2026 → switched to HIMS chewable.
+  Norwood 3-4.
+
+habits:
+  - id: hims_chewable
+    label: HIMS chewable taken
+    priority: 1
+    nudge: "Take daily — consistency is the #1 factor. Finasteride works by sustained DHT suppression."
+
+outcome_metrics:
+  - id: sleep_duration_avg
+    source: garmin
+    target: 7.0
+    unit: hours
+    note: "Sleep affects hair — cortisol accelerates telogen effluvium"
+
+phases:
+  - name: "Shedding phase (expected)"
+    weeks: [1, 2, 3, 4, 5, 6, 7, 8]
+    focus: >
+      Shedding is normal and expected — weak hairs pushed out by new growth.
+      Do NOT judge results during this phase. Just take the pill daily.
+  - name: "Early stabilization"
+    weeks: [9, 10, 11, 12]
+    focus: >
+      Shedding should slow. Look for less hair in shower drain, not visible
+      regrowth yet. Monthly photos are the real signal.
+  - name: "Assessment"
+    weeks: [13, 14, 15, 16]
+    focus: >
+      Compare month 1 vs month 4 photos. Decision point: continue oral only,
+      or add microneedling (1.5mm derma pen, every 2 weeks) for temples.
+
+checkpoints:
+  - week: 4
+    action: "Monthly photo (top-down, hairline, temples, same bathroom lighting)"
+  - week: 8
+    action: "Monthly photo + shedding assessment. Is shedding slowing?"
+  - week: 12
+    action: "Monthly photo. Compare to baseline. Sleep should be fixed by now — check if recovery helped."
+  - week: 16
+    action: "Decision point: oral only working? Add microneedling? Adjust dose?"

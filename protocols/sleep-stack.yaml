@@ -1,0 +1,152 @@
+# Sleep Stack Protocol
+# 6-week progressive sleep optimization
+# Includes nicotine taper (subsumes nicotine-taper.yaml)
+
+name: Sleep Stack
+description: >
+  Progressive sleep hygiene protocol targeting sleep onset, duration, and consistency.
+  Nicotine taper is integrated here because it serves sleep quality directly.
+
+# Target bedtime anchors the schedule. All offsets are relative to this.
+target_bedtime: "22:00"
+target_waketime: "06:00"
+
+habits:
+  - id: am_sunlight
+    label: Morning sunlight (10 min)
+    priority: 1
+    offset_from: wake
+    offset_minutes: 30
+    why: >
+      Bright light within an hour of waking advances your circadian clock and
+      suppresses melatonin. This is the single strongest zeitgeber (time-giver)
+      your body has. It also triggers a cortisol pulse that sets your alertness
+      for the day and, counterintuitively, makes you sleepier at night.
+    nudge: "10 min outside within 1 hour of waking."
+
+  - id: no_caffeine_after_noon
+    label: No caffeine after noon
+    priority: 2
+    offset_from: fixed
+    fixed_time: "12:00"
+    why: >
+      Caffeine has a half-life of 5-6 hours, meaning half of a 2pm coffee is
+      still circulating at 8pm. It blocks adenosine receptors, which are
+      responsible for building sleep pressure. Even if you fall asleep fine,
+      caffeine reduces deep sleep by 15-20%.
+    nudge: "Caffeine cutoff at noon."
+
+  - id: nicotine_cutoff
+    label: Nicotine cutoff
+    priority: 3
+    offset_from: bed
+    offset_minutes: -300
+    why: >
+      Nicotine is a stimulant with a ~2hr half-life. But its metabolite cotinine
+      lingers for 16+ hours and keeps the sympathetic nervous system slightly
+      activated. A 5hr buffer before bed gets nicotine below 20% of peak, enough
+      to stop it from fragmenting your sleep cycles. Each phase pulls the cutoff
+      earlier as tolerance builds.
+    nudge: "Hit your cutoff time."
+
+  - id: last_meal_2hr
+    label: Last meal
+    priority: 4
+    offset_from: bed
+    offset_minutes: -150
+    why: >
+      Eating raises core body temperature through the thermic effect of food.
+      Your body needs to drop core temp by ~1C to initiate sleep. A large meal
+      within 2 hours of bed delays this cooling, pushing sleep onset later and
+      reducing deep sleep in the first half of the night. This habit has the
+      highest single correlation with sleep quality in your data.
+    nudge: "Finish eating 2.5 hrs before bed."
+
+  - id: ac_67
+    label: Room temp to 67F
+    priority: 5
+    offset_from: bed
+    offset_minutes: -90
+    why: >
+      The bedroom needs 30-45 min to actually reach target temperature after
+      you set the thermostat. A room at 65-67F supports the core body temp
+      drop required for deep sleep onset. Above 70F, you spend more time in
+      light sleep and wake more often. This is non-negotiable physiology.
+    nudge: "Set AC 90 min before bed."
+
+  - id: hot_shower
+    label: Hot shower
+    priority: 6
+    offset_from: bed
+    offset_minutes: -60
+    why: >
+      Counterintuitive: a hot shower makes you cooler. It dilates blood vessels
+      in your hands and feet, which rapidly radiates heat away from your core.
+      The result is a faster drop in core body temperature than you'd get
+      naturally. The effect peaks 20-30 min after the shower, which is why
+      timing it 45-60 min before bed puts the temperature dip right at lights
+      out. Studies show this can reduce sleep onset by 10+ minutes.
+    nudge: "Hot shower 1 hr before bed."
+
+  - id: evening_routine
+    label: Wind-down routine
+    priority: 7
+    offset_from: bed
+    offset_minutes: -45
+    why: >
+      A consistent pre-bed sequence acts as a behavioral cue that trains your
+      brain to begin downshifting. The specific activities matter less than the
+      consistency. Dim lights, same sequence, same timing. Over 2-3 weeks this
+      becomes a conditioned response that accelerates sleep onset.
+    nudge: "Start wind-down 45 min before bed."
+
+  - id: earplugs
+    label: Earplugs in
+    priority: 8
+    offset_from: bed
+    offset_minutes: -5
+    why: >
+      Environmental noise causes micro-arousals even when you don't consciously
+      wake up. Each arousal bumps you from deep sleep to light sleep, fragmenting
+      your sleep architecture. Over a full night, this can cost 30-60 min of
+      effective deep sleep. Earplugs are the cheapest sleep intervention that
+      exists.
+    nudge: "Earplugs in at lights out."
+
+  - id: bed_only_sleep
+    label: Bed only for sleep
+    priority: 9
+    offset_from: bed
+    offset_minutes: 0
+    why: >
+      Stimulus control therapy: your brain associates locations with activities.
+      If you read, scroll, or watch TV in bed, your brain learns that bed is a
+      place for wakefulness. Restricting bed to sleep only retrains the
+      association so that getting into bed becomes a cue for drowsiness, not
+      alertness. Takes 1-2 weeks to take effect.
+    nudge: "Get in bed only when ready to sleep."
+
+outcome_metrics:
+  - id: sleep_duration_avg
+    source: garmin
+    target: 7.5
+    unit: hours
+  - id: sleep_regularity_stddev
+    source: garmin
+    target: 30
+    direction: lower_is_better
+    unit: min
+
+phases:
+  - name: "Building the routine"
+    weeks: [1, 2]
+    focus: "Lock in the basics. Temperature, timing, consistency. Nicotine cutoff at 5pm."
+    nicotine_cutoff: "17:00"
+  - name: "Dialing it in"
+    weeks: [3, 4]
+    focus: "Fine-tune what's working. Watch sleep onset and wake quality. Nicotine cutoff moves to 3pm."
+    nicotine_cutoff: "15:00"
+  - name: "Sustaining gains"
+    weeks: [5, 6]
+    focus: "Habits should feel automatic. Focus shifts to outcome metrics. Nicotine cutoff holds at 3pm or earlier."
+    nicotine_cutoff: "15:00"

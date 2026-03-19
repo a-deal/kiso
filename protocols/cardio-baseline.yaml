@@ -1,0 +1,88 @@
+# Cardiovascular Baseline Protocol
+# 6-week protocol to establish heart health monitoring and zone 2 cardio
+# Generic — suitable for sedentary to moderately active individuals
+
+name: Cardio Baseline
+description: >
+  A 6-week protocol to establish cardiovascular health monitoring and build
+  an aerobic base. Focuses on daily movement, blood pressure tracking, and
+  progressive zone 2 cardio sessions. Zone 2 = conversational pace, the
+  intensity where fat oxidation and mitochondrial density improve most.
+
+habits:
+  - id: daily_steps
+    label: Hit step target
+    priority: 1
+    offset_from: fixed
+    fixed_time: "20:00"
+    why: >
+      Steps are the simplest proxy for daily movement. Research shows
+      mortality risk drops significantly up to ~8,000 steps/day, with
+      diminishing returns above 10,000. If you're currently at 3,000,
+      adding 2,000 is more impactful than going from 8,000 to 10,000.
+      Start where you are and build up.
+    nudge: "Check your step count — are you on track?"
+
+  - id: morning_bp
+    label: Morning BP reading
+    priority: 2
+    offset_from: wake
+    offset_minutes: 30
+    why: >
+      Blood pressure is the single most predictive vital sign for
+      cardiovascular events. Morning readings (before coffee, after
+      5 min sitting) are the most reliable. Track for 7+ days to get
+      a meaningful average — single readings fluctuate by 10-15 mmHg.
+      Target: <120/80.
+    nudge: "Take your morning BP reading."
+
+  - id: zone2_session
+    label: Zone 2 cardio session
+    priority: 3
+    offset_from: fixed
+    fixed_time: "15:00"
+    why: >
+      Zone 2 cardio (60-70% max HR, conversational pace) builds
+      mitochondrial density, improves fat oxidation, and strengthens
+      cardiac output. 150 min/week is the AHA minimum. Walking, cycling,
+      swimming, or rowing all count. You should be able to hold a
+      conversation — if you can't, slow down.
+    nudge: "Get your zone 2 session in today."
+
+  - id: hydration
+    label: Adequate hydration
+    priority: 4
+    offset_from: fixed
+    fixed_time: "12:00"
+    why: >
+      Dehydration increases heart rate, reduces stroke volume, and
+      impairs thermoregulation during exercise. A simple check: if
+      your urine is pale yellow, you're fine. Dark yellow = drink more.
+      Aim for ~half your body weight in ounces per day as a baseline.
+    nudge: "How's your water intake today?"
+
+outcome_metrics:
+  - id: resting_hr
+    source: garmin
+    target: 60
+    direction: lower_is_better
+    unit: bpm
+  - id: daily_steps_avg
+    source: garmin
+    target: 8000
+    unit: steps
+  - id: zone2_min_per_week
+    source: garmin
+    target: 150
+    unit: min
+
+phases:
+  - name: "Establish baseline"
+    weeks: [1, 2]
+    focus: "Start tracking BP daily and get your step count up. Add 2-3 zone 2 sessions of 20-30 min."
+  - name: "Build consistency"
+    weeks: [3, 4]
+    focus: "Zone 2 sessions should be 30-45 min. Look at your BP trend — is it consistent?"
+  - name: "Sustain and assess"
+    weeks: [5, 6]
+    focus: "You should have 4+ weeks of BP data and a zone 2 habit. Review your resting HR trend."

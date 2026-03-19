@@ -9,6 +9,7 @@ Patterns:
   - Atherogenic dyslipidemia (TG/HDL ratio proxy)
   - Insulin resistance pattern (compensatory hyperinsulinemia)
   - Recovery stress (wearable composite signal)
+  - Recovery-deficit cascade (sleep + deficit + variance + HRV)
 """
 
 from typing import Optional
@@ -16,9 +17,10 @@ from engine.models import Insight, UserProfile
 
 
 def summarize_patterns(profile: UserProfile,
-                       garmin: Optional[dict] = None) -> list[dict]:
+                       garmin: Optional[dict] = None,
+                       weekly_loss_rate: Optional[float] = None) -> list[dict]:
     """
-    Return structured pattern summaries for all 4 compound patterns.
+    Return structured pattern summaries for all 5 compound patterns.
 
     Each dict: name, detected, criteria_met, criteria_total, metrics, severity.
     Used by the dashboard to show pattern status even when not triggered.
@@ -37,11 +39,15 @@ def summarize_patterns(profile: UserProfile,
     # Recovery stress
     summaries.append(_summarize_recovery_stress(profile, garmin))
 
+    # Recovery-deficit cascade
+    summaries.append(_summarize_recovery_deficit_cascade(garmin, weekly_loss_rate))
+
     return summaries
 
 
 def detect_patterns(profile: UserProfile,
-                    garmin: Optional[dict] = None) -> list[Insight]:
+                    garmin: Optional[dict] = None,
+                    weekly_loss_rate: Optional[float] = None) -> list[Insight]:
     """
     Detect cross-metric interaction patterns from a scored profile.
 
@@ -64,6 +70,10 @@ def detect_patterns(profile: UserProfile,
     recovery = _detect_recovery_stress(profile, garmin)
     if recovery:
         insights.append(recovery)
+
+    cascade = _detect_recovery_deficit_cascade(garmin, weekly_loss_rate)
+    if cascade:
+        insights.append(cascade)
 
     return insights
 
@@ -374,6 +384,97 @@ def _summarize_recovery_stress(profile: UserProfile,
         "detected": detected,
         "criteria_met": criteria_met,
         "criteria_total": 3,
+        "metrics": metrics,
+        "severity": severity,
+    }
+
+
+def _detect_recovery_deficit_cascade(garmin: Optional[dict] = None,
+                                     weekly_loss_rate: Optional[float] = None) -> Optional[Insight]:
+    """
+    Recovery-Deficit Cascade: sleep debt + caloric deficit + bedtime irregularity + HRV suppression.
+
+    4 criteria:
+      1. Sleep < 7hr avg
+      2. Active deficit (weekly_loss_rate > 0)
+      3. Bedtime variance > 60 min
+      4. HRV < 60 ms (recovery buffer eroding)
+
+    Fires at 3/4 as warning, 4/4 as critical.
+    Distinct from Recovery Stress (which is pure wearable signals without the deficit dimension).
+    """
+    g = garmin or {}
+    sleep = g.get("sleep_duration_avg")
+    regularity = g.get("sleep_regularity_stddev")
+    hrv = g.get("hrv_rmssd_avg")
+
+    criteria_met = 0
+    metrics = []
+
+    if sleep is not None and sleep < 7.0:
+        criteria_met += 1
+        metrics.append(f"sleep {sleep:.1f}hrs")
+
+    if weekly_loss_rate is not None and weekly_loss_rate > 0:
+        criteria_met += 1
+        metrics.append(f"deficit {weekly_loss_rate:.1f} lbs/wk")
+
+    if regularity is not None and regularity > 60:
+        criteria_met += 1
+        metrics.append(f"±{regularity:.0f}min variance")
+
+    if hrv is not None and hrv < 60:
+        criteria_met += 1
+        metrics.append(f"HRV {hrv:.0f}ms")
+
+    if criteria_met >= 3:
+        detail = ", ".join(metrics)
+        severity = "critical" if criteria_met == 4 else "warning"
+        return Insight(
+            severity=severity,
+            category="pattern",
+            title=f"Recovery-Deficit Cascade ({criteria_met}/4 criteria)",
+            body=(
+                f"Criteria: {detail}. "
+                "Sleep debt during a caloric deficit shifts weight loss toward lean mass "
+                "(Nedeltcheva 2010). Irregular bedtimes disrupt cortisol rhythm. "
+                "Low HRV confirms the cascade is physiologically measurable. "
+                "Consider pausing the deficit or reducing its aggressiveness until sleep stabilizes."
+            ),
+        )
+    return None
+
+
+def _summarize_recovery_deficit_cascade(garmin: Optional[dict] = None,
+                                        weekly_loss_rate: Optional[float] = None) -> dict:
+    g = garmin or {}
+    sleep = g.get("sleep_duration_avg")
+    regularity = g.get("sleep_regularity_stddev")
+    hrv = g.get("hrv_rmssd_avg")
+
+    criteria_met = 0
+    metrics = []
+
+    if sleep is not None and sleep < 7.0:
+        criteria_met += 1
+        metrics.append(f"sleep {sleep:.1f}hrs")
+    if weekly_loss_rate is not None and weekly_loss_rate > 0:
+        criteria_met += 1
+        metrics.append(f"deficit {weekly_loss_rate:.1f} lbs/wk")
+    if regularity is not None and regularity > 60:
+        criteria_met += 1
+        metrics.append(f"±{regularity:.0f}min")
+    if hrv is not None and hrv < 60:
+        criteria_met += 1
+        metrics.append(f"HRV {hrv:.0f}ms")
+
+    detected = criteria_met >= 3
+    severity = "critical" if criteria_met == 4 else ("warning" if detected else "none")
+    return {
+        "name": "Recovery-Deficit Cascade",
+        "detected": detected,
+        "criteria_met": criteria_met,
+        "criteria_total": 4,
         "metrics": metrics,
         "severity": severity,
     }

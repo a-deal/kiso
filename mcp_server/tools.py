@@ -19,8 +19,17 @@ from engine.utils.csv_io import read_csv, write_csv
 _USER_HOME = Path(os.path.expanduser("~/.config/health-engine"))
 
 
-def _config_path() -> Path:
-    """Find config.yaml — check PROJECT_ROOT first, then user home."""
+def _user_dir(user_id: str) -> Path:
+    """Per-user data directory under data/users/<user_id>/."""
+    base = PROJECT_ROOT / "data" / "users" / user_id
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _config_path(user_id: str | None = None) -> Path:
+    """Find config.yaml — per-user if user_id given, else legacy paths."""
+    if user_id and user_id != "default":
+        return _user_dir(user_id) / "config.yaml"
     local = PROJECT_ROOT / "config.yaml"
     if local.exists():
         return local
@@ -28,15 +37,17 @@ def _config_path() -> Path:
     return home
 
 
-def _load_config() -> dict:
-    path = _config_path()
+def _load_config(user_id: str | None = None) -> dict:
+    path = _config_path(user_id)
     if not path.exists():
         return {}
     with open(path) as f:
         return yaml.safe_load(f) or {}
 
 
-def _data_dir() -> Path:
+def _data_dir(user_id: str | None = None) -> Path:
+    if user_id and user_id != "default":
+        return _user_dir(user_id)
     config = _load_config()
     rel = config.get("data_dir", None)
     if rel:
@@ -62,20 +73,22 @@ def register_tools(mcp: FastMCP):
     """Register all Health Engine tools on the given MCP server."""
 
     @mcp.tool()
-    def checkin(greeting: str = "morning check-in") -> dict:
+    def checkin(greeting: str = "morning check-in", user_id: str | None = None) -> dict:
         """Full health coaching briefing — scores, insights, weight, nutrition, habits, protocols, Garmin data. Call this first when the user asks about their health. Pass a short greeting like 'morning check-in' or 'how am I doing'."""
         from engine.coaching.briefing import build_briefing
 
-        config = _load_config()
+        config = _load_config(user_id)
+        if user_id and user_id != "default":
+            config["data_dir"] = str(_data_dir(user_id))
         return build_briefing(config)
 
     @mcp.tool()
-    def score() -> dict:
+    def score(user_id: str | None = None) -> dict:
         """Scoring engine deep-dive: coverage %, NHANES percentiles for 20 metrics, tier breakdown, and ranked gap analysis showing what to measure next."""
         from engine.models import Demographics, UserProfile
         from engine.scoring.engine import score_profile
 
-        config = _load_config()
+        config = _load_config(user_id)
         profile_cfg = config.get("profile", {})
         demo = Demographics(
             age=profile_cfg.get("age", 35),
@@ -94,7 +107,7 @@ def register_tools(mcp: FastMCP):
             profile.phq9_score = profile_cfg["phq9_score"]
 
         # Load wearable data into profile (Garmin preferred, Apple Health fallback)
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         wearable_attrs = ("resting_hr", "daily_steps_avg", "sleep_regularity_stddev",
                           "sleep_duration_avg", "vo2_max", "hrv_rmssd_avg", "zone2_min_per_week")
         wearable_data = _load_json_file(data_dir / "garmin_latest.json")
@@ -166,16 +179,16 @@ def register_tools(mcp: FastMCP):
         }
 
     @mcp.tool()
-    def get_protocols() -> list[dict]:
+    def get_protocols(user_id: str | None = None) -> list[dict]:
         """Active protocol progress — day, week, phase, last night's habits, nudges, outcomes. Covers sleep stack, nicotine taper, and any other active protocols."""
         from engine.coaching.protocols import load_protocol, protocol_progress
 
-        config = _load_config()
+        config = _load_config(user_id)
         focus_list = config.get("focus", [])
         if not focus_list:
             return [{"message": "No active protocols in config.yaml focus list."}]
 
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         habit_data = read_csv(data_dir / "daily_habits.csv") or None
 
         garmin = None
@@ -207,10 +220,10 @@ def register_tools(mcp: FastMCP):
         return results
 
     @mcp.tool()
-    def log_weight(weight_lbs: float, date: str | None = None) -> dict:
+    def log_weight(weight_lbs: float, date: str | None = None, user_id: str | None = None) -> dict:
         """Log a weight measurement. Date defaults to today."""
         date = date or datetime.now().strftime("%Y-%m-%d")
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         path = data_dir / "weight_log.csv"
         rows = read_csv(path)
         fieldnames = ["date", "weight_lbs", "source", "waist_in"]
@@ -219,10 +232,10 @@ def register_tools(mcp: FastMCP):
         return {"logged": True, "date": date, "weight_lbs": weight_lbs}
 
     @mcp.tool()
-    def log_bp(systolic: int, diastolic: int, date: str | None = None) -> dict:
+    def log_bp(systolic: int, diastolic: int, date: str | None = None, user_id: str | None = None) -> dict:
         """Log a blood pressure reading. Date defaults to today."""
         date = date or datetime.now().strftime("%Y-%m-%d")
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         path = data_dir / "bp_log.csv"
         rows = read_csv(path)
         fieldnames = ["date", "systolic", "diastolic", "source"]
@@ -231,10 +244,10 @@ def register_tools(mcp: FastMCP):
         return {"logged": True, "date": date, "systolic": systolic, "diastolic": diastolic}
 
     @mcp.tool()
-    def log_habits(habits: dict, date: str | None = None) -> dict:
-        """Log daily habits. Pass a dict of habit_name: 'y' or 'n'. Date defaults to today. Habit names must match CSV columns (e.g. am_sunlight, creatine, evening_routine)."""
+    def log_habits(habits: dict, date: str | None = None, user_id: str | None = None) -> dict:
+        """Log daily habits. Pass a dict of habit_name: 'y' or 'n'. Date defaults to today. Habit names must match CSV columns (e.g. am_sunlight, creatine, evening_routine). For bed_time and wake_time, pass actual time strings like '22:15' or '06:30' instead of y/n."""
         date = date or datetime.now().strftime("%Y-%m-%d")
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         path = data_dir / "daily_habits.csv"
         rows = read_csv(path)
 
@@ -259,12 +272,83 @@ def register_tools(mcp: FastMCP):
             if k not in fieldnames:
                 fieldnames.insert(-1, k)  # before 'notes'
 
-        # Update values
+        # Update values — time columns (bed_time, wake_time) accept HH:MM strings
         for k, v in habits.items():
             target_row[k] = v
 
         write_csv(path, rows, fieldnames=fieldnames)
         return {"logged": True, "date": date, "habits": habits}
+
+    # -- Standard supplement stacks (edit here when stack changes) --
+    SUPPLEMENT_STACKS = {
+        "morning": [
+            {"name": "baby_aspirin", "dose": "81mg"},
+            {"name": "vitamin_d", "dose": "5000 IU"},
+            {"name": "fish_oil", "dose": "2 capsules (Nordic Naturals)"},
+            {"name": "hims", "dose": "finasteride 1.2mg / minoxidil 3mg / biotin 2.5mg"},
+            {"name": "heart_and_soil", "dose": "organ meat probiotics x3"},
+            {"name": "celsius", "dose": "1 can"},
+            {"name": "bone_broth", "dose": "8oz (Kettle & Fire)"},
+        ],
+        "evening": [
+            {"name": "magnesium_glycinate", "dose": "200-400mg"},
+            {"name": "melatonin", "dose": "300mcg"},
+        ],
+    }
+
+    @mcp.tool()
+    def log_supplements(stack: str | None = None, supplements: list[str] | None = None, date: str | None = None, user_id: str | None = None) -> dict:
+        """Log supplement intake. Use stack='morning' or stack='evening' to log a full predefined stack, or pass supplements as a list of individual names (e.g. ['vitamin_d', 'fish_oil']). Date defaults to today."""
+        date = date or datetime.now().strftime("%Y-%m-%d")
+        data_dir = _data_dir(user_id)
+        path = data_dir / "supplement_log.csv"
+        rows = read_csv(path)
+
+        # Determine which supplements to log
+        items: list[dict] = []
+        if stack and stack in SUPPLEMENT_STACKS:
+            items = SUPPLEMENT_STACKS[stack]
+        elif supplements:
+            # Look up from all stacks
+            all_supps = {s["name"]: s for st in SUPPLEMENT_STACKS.values() for s in st}
+            for name in supplements:
+                if name in all_supps:
+                    items.append(all_supps[name])
+                else:
+                    items.append({"name": name, "dose": ""})
+        else:
+            return {"logged": False, "error": "Provide stack='morning'|'evening' or supplements=['name1', 'name2']. Available stacks: " + ", ".join(SUPPLEMENT_STACKS.keys())}
+
+        fieldnames = ["date", "name", "dose", "stack", "source"]
+        for item in items:
+            rows.append({
+                "date": date,
+                "name": item["name"],
+                "dose": item.get("dose", ""),
+                "stack": stack or "individual",
+                "source": "mcp",
+            })
+        write_csv(path, rows, fieldnames=fieldnames)
+
+        logged_names = [i["name"] for i in items]
+        return {"logged": True, "date": date, "count": len(items), "supplements": logged_names}
+
+    @mcp.tool()
+    def log_sleep(bed_time: str, wake_time: str, date: str | None = None, user_id: str | None = None) -> dict:
+        """Log bed and wake times. Times should be in HH:MM format (e.g. '22:15', '06:10'). Date defaults to today. For bed_time, use the date you went TO bed (not the next morning)."""
+        date = date or datetime.now().strftime("%Y-%m-%d")
+
+        # Validate time format
+        for time_str, name in [(bed_time, "bed_time"), (wake_time, "wake_time")]:
+            try:
+                parts = time_str.split(":")
+                h, m = int(parts[0]), int(parts[1])
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    raise ValueError
+            except (ValueError, IndexError, AttributeError):
+                return {"logged": False, "error": f"Invalid {name} format '{time_str}'. Use HH:MM (e.g. '22:15')."}
+
+        return log_habits({"bed_time": bed_time, "wake_time": wake_time}, date, user_id=user_id)
 
     @mcp.tool()
     def log_meal(
@@ -274,10 +358,11 @@ def register_tools(mcp: FastMCP):
         fat_g: float | None = None,
         calories: float | None = None,
         date: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
         """Log a meal. Protein is required; carbs, fat, calories are optional. Date defaults to today."""
         date = date or datetime.now().strftime("%Y-%m-%d")
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         path = data_dir / "meal_log.csv"
         rows = read_csv(path)
         fieldnames = ["date", "meal_num", "time_of_day", "description", "protein_g", "carbs_g", "fat_g", "calories", "notes"]
@@ -304,13 +389,41 @@ def register_tools(mcp: FastMCP):
         return {"logged": True, "date": date, "meal_num": meal_num, "description": description, "protein_g": protein_g}
 
     @mcp.tool()
-    def get_status() -> dict:
+    def log_medication(
+        name: str,
+        dose: str,
+        route: str | None = None,
+        notes: str | None = None,
+        date: str | None = None,
+        user_id: str | None = None,
+    ) -> dict:
+        """Log a medication or injection (e.g. tirzepatide 2.5mg subcutaneous). Tracks dose changes over time. Route examples: oral, subcutaneous, intramuscular, topical. Date defaults to today."""
+        date = date or datetime.now().strftime("%Y-%m-%d")
+        data_dir = _data_dir(user_id)
+        path = data_dir / "medication_log.csv"
+        rows = read_csv(path)
+        fieldnames = ["date", "name", "dose", "route", "notes", "source"]
+
+        rows.append({
+            "date": date,
+            "name": name,
+            "dose": dose,
+            "route": route or "",
+            "notes": notes or "",
+            "source": "mcp",
+        })
+        write_csv(path, rows, fieldnames=fieldnames)
+        return {"logged": True, "date": date, "name": name, "dose": dose, "route": route or ""}
+
+    @mcp.tool()
+    def get_status(user_id: str | None = None) -> dict:
         """Data files inventory — what exists, last modified, row counts. Useful for understanding what data the user has."""
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         files = {}
         for name in ["weight_log.csv", "bp_log.csv", "meal_log.csv", "daily_habits.csv",
-                      "strength_log.csv", "garmin_latest.json", "garmin_daily.json",
-                      "lab_results.json", "briefing.json"]:
+                      "strength_log.csv", "medication_log.csv", "supplement_log.csv",
+                      "garmin_latest.json", "garmin_daily.json",
+                      "apple_health_latest.json", "lab_results.json", "briefing.json"]:
             path = data_dir / name
             if path.exists():
                 stat = path.stat()
@@ -326,21 +439,21 @@ def register_tools(mcp: FastMCP):
             else:
                 files[name] = {"exists": False}
 
-        config = _load_config()
+        config = _load_config(user_id)
         has_config = bool(config.get("profile", {}).get("age"))
         return {"data_dir": str(data_dir), "config_loaded": has_config, "files": files}
 
     @mcp.tool()
-    def onboard() -> dict:
+    def onboard(user_id: str | None = None) -> dict:
         """Coverage map and guided setup. Shows all 20 health metrics,
         what's tracked vs missing, and ranked next steps by leverage.
         Call for new users or when someone asks 'what should I measure?'"""
         from engine.models import Demographics, UserProfile
         from engine.scoring.engine import score_profile
 
-        config = _load_config()
+        config = _load_config(user_id)
         profile_cfg = config.get("profile", {})
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
 
         # Build profile — same data loading as briefing/score
         has_config = bool(profile_cfg.get("age"))
@@ -518,16 +631,61 @@ def register_tools(mcp: FastMCP):
         }
 
     @mcp.tool()
-    def connect_garmin() -> dict:
+    def auth_garmin(user_id: str | None = None) -> dict:
+        """Authenticate with Garmin Connect via a secure browser form. Opens your browser — you type credentials there, never in chat. Credentials are used once to obtain tokens and are NOT stored."""
+        from mcp_server.garmin_auth import run_auth_flow
+
+        config = _load_config(user_id)
+        garmin_cfg = config.get("garmin", {})
+        token_dir = garmin_cfg.get("token_dir", os.path.expanduser("~/.config/health-engine/garmin-tokens"))
+        return run_auth_flow(token_dir=token_dir)
+
+    @mcp.tool()
+    def pull_garmin(history: bool = False, workouts: bool = False, user_id: str | None = None) -> dict:
+        """Pull fresh data from Garmin Connect. Returns latest metrics and optionally 90-day history + workout details. Requires auth_garmin first if tokens are expired."""
+        from engine.integrations.garmin import GarminClient
+
+        config = _load_config(user_id)
+        if user_id and user_id != "default":
+            config["data_dir"] = str(_data_dir(user_id))
+        try:
+            client = GarminClient.from_config(config)
+            result = client.pull_all(
+                history=history,
+                history_days=90,
+                workouts=workouts,
+                workout_days=7,
+            )
+            # Regenerate briefing with fresh data
+            from engine.coaching.briefing import build_briefing
+            briefing = build_briefing(config)
+            data_dir = Path(config.get("data_dir", "./data"))
+            with open(data_dir / "briefing.json", "w") as f:
+                json.dump(briefing, f, indent=2, default=str)
+
+            return {
+                "pulled": True,
+                "metrics": result,
+                "briefing_refreshed": True,
+            }
+        except Exception as e:
+            return {
+                "pulled": False,
+                "error": str(e),
+                "hint": "If tokens expired, use auth_garmin to re-authenticate via browser.",
+            }
+
+    @mcp.tool()
+    def connect_garmin(user_id: str | None = None) -> dict:
         """Check Garmin connection status — whether tokens are cached, data freshness, and hints for next steps."""
         from engine.integrations.garmin import GarminClient
 
-        config = _load_config()
+        config = _load_config(user_id)
         garmin_cfg = config.get("garmin", {})
         token_dir = garmin_cfg.get("token_dir")
         has_tokens = GarminClient.has_tokens(token_dir=token_dir)
 
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         garmin_path = data_dir / "garmin_latest.json"
         has_data = garmin_path.exists()
         freshness = None
@@ -538,11 +696,11 @@ def register_tools(mcp: FastMCP):
             freshness = garmin.get("last_updated")
 
         if not has_tokens:
-            hint = "No Garmin tokens found. Run `python3 cli.py auth garmin` to authenticate."
+            hint = "No Garmin tokens found. Use auth_garmin tool with your email and password."
         elif not has_data:
-            hint = "Tokens cached but no data yet. Run `python3 cli.py pull garmin` to fetch metrics."
+            hint = "Tokens cached but no data yet. Use pull_garmin tool to fetch metrics."
         else:
-            hint = "Connected. Run `python3 cli.py pull garmin` to refresh data."
+            hint = "Connected. Use pull_garmin tool to refresh data."
 
         return {
             "tokens_cached": has_tokens,
@@ -552,15 +710,17 @@ def register_tools(mcp: FastMCP):
         }
 
     @mcp.tool()
-    def open_dashboard() -> dict:
+    def open_dashboard(user_id: str | None = None) -> dict:
         """Open the health dashboard in a browser. Refreshes briefing data first."""
         from engine.coaching.briefing import build_briefing
 
-        config = _load_config()
+        config = _load_config(user_id)
+        if user_id and user_id != "default":
+            config["data_dir"] = str(_data_dir(user_id))
         briefing = build_briefing(config)
 
         # Write fresh briefing for dashboard to read
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         data_dir.mkdir(parents=True, exist_ok=True)
         briefing_path = data_dir / "briefing.json"
         with open(briefing_path, "w") as f:
@@ -575,6 +735,75 @@ def register_tools(mcp: FastMCP):
         return {"opened": True, "briefing_refreshed": True}
 
     @mcp.tool()
+    def import_apple_health(file_path: str, lookback_days: int = 90, user_id: str | None = None) -> dict:
+        """Import Apple Health data from an export ZIP or XML file.
+
+        Parses RHR, HRV (SDNN), steps, VO2 max, and sleep data using streaming
+        SAX parser (handles large exports without memory issues).
+
+        HOW TO EXPORT from iPhone:
+        1. Open the Health app (or Settings → Health)
+        2. Tap your profile picture (top right)
+        3. Scroll down → "Export All Health Data"
+        4. Tap "Export" — this creates a ZIP file
+        5. AirDrop, email, or transfer the ZIP to your computer
+        6. Call this tool with the file path
+
+        Args:
+            file_path: Path to the export.zip (or export.xml) on your machine
+            lookback_days: How many days of history to include (default 90)
+        """
+        from engine.integrations.apple_health import AppleHealthParser
+
+        data_dir = _data_dir(user_id)
+        parser = AppleHealthParser(data_dir=str(data_dir))
+
+        expanded = os.path.expanduser(file_path)
+        if not os.path.exists(expanded):
+            return {
+                "imported": False,
+                "error": f"File not found: {file_path}",
+                "hint": (
+                    "Make sure the file path is correct. On Mac, you can drag "
+                    "the file into Terminal to get the full path."
+                ),
+            }
+
+        try:
+            result = parser.parse_export(expanded, lookback_days=lookback_days)
+            out_path = parser.save(result)
+
+            # Count what we got
+            metrics_found = [k for k in (
+                "resting_hr", "hrv_rmssd_avg", "daily_steps_avg",
+                "vo2_max", "sleep_duration_avg", "sleep_regularity_stddev",
+            ) if result.get(k) is not None]
+
+            return {
+                "imported": True,
+                "saved_to": str(out_path),
+                "lookback_days": lookback_days,
+                "metrics_found": metrics_found,
+                "metrics_count": len(metrics_found),
+                "data": {k: result[k] for k in metrics_found},
+                "note": (
+                    "Apple Health HRV uses SDNN (not RMSSD). Values may differ "
+                    "slightly from Garmin. Both are valid for tracking trends."
+                ) if "hrv_rmssd_avg" in metrics_found else None,
+                "next": "Run checkin or score to see how these metrics affect your health picture.",
+            }
+        except FileNotFoundError as e:
+            return {"imported": False, "error": str(e)}
+        except ValueError as e:
+            return {
+                "imported": False,
+                "error": str(e),
+                "hint": "Make sure this is an Apple Health export file (ZIP containing export.xml).",
+            }
+        except Exception as e:
+            return {"imported": False, "error": f"Parse error: {e}"}
+
+    @mcp.tool()
     def setup_profile(
         age: int,
         sex: str,
@@ -584,26 +813,44 @@ def register_tools(mcp: FastMCP):
         medications: str | None = None,
         waist_inches: float | None = None,
         phq9_score: int | None = None,
+        # Rich onboarding fields
+        name: str | None = None,
+        goals: list[str] | None = None,
+        obstacles: str | None = None,
+        existing_habits: str | None = None,
+        exercise_freq: str | None = None,
+        sleep_hours: float | None = None,
+        sleep_quality: str | None = None,
+        stress_level: str | None = None,
+        conditions: list[str] | None = None,
+        alcohol_use: str | None = None,
+        tobacco_use: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
-        """Create or update config.yaml with user profile. Sex should be 'M' or 'F'. Weight target in lbs, protein in grams. family_history: any heart disease before 60 in parents? medications: free text list. waist_inches: waist measurement. phq9_score: 0-27 depression screen."""
-        cp = _config_path()
+        """Create or update config.yaml with user profile. Sex should be 'M' or 'F'. Weight target in lbs, protein in grams."""
+        cp = _config_path(user_id)
         cp.parent.mkdir(parents=True, exist_ok=True)
 
         if cp.exists():
             with open(cp) as f:
                 config = yaml.safe_load(f) or {}
         else:
-            # Start from example if available (local dev)
-            example = PROJECT_ROOT / "config.example.yaml"
-            if example.exists():
-                with open(example) as f:
-                    config = yaml.safe_load(f) or {}
+            # For new per-user configs, start minimal. For default, try example.
+            if not user_id or user_id == "default":
+                example = PROJECT_ROOT / "config.example.yaml"
+                if example.exists():
+                    with open(example) as f:
+                        config = yaml.safe_load(f) or {}
+                else:
+                    config = {}
             else:
                 config = {}
 
         config.setdefault("profile", {})
         config["profile"]["age"] = age
         config["profile"]["sex"] = sex.upper()
+        if name is not None:
+            config["profile"]["name"] = name
         if family_history is not None:
             config["profile"]["family_history"] = family_history
         if medications is not None:
@@ -619,18 +866,57 @@ def register_tools(mcp: FastMCP):
         if protein_target is not None:
             config["targets"]["protein_g"] = protein_target
 
+        # Rich onboarding intake section
+        intake_fields = {
+            "goals": goals,
+            "obstacles": obstacles,
+            "existing_habits": existing_habits,
+            "exercise_freq": exercise_freq,
+            "sleep_hours": sleep_hours,
+            "sleep_quality": sleep_quality,
+            "stress_level": stress_level,
+            "conditions": conditions,
+            "alcohol_use": alcohol_use,
+            "tobacco_use": tobacco_use,
+        }
+        has_intake = any(v is not None for v in intake_fields.values())
+        if has_intake:
+            config.setdefault("intake", {})
+            for key, val in intake_fields.items():
+                if val is not None:
+                    config["intake"][key] = val
+
         with open(cp, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
         # Ensure data dir exists
-        data_dir = _data_dir()
+        data_dir = _data_dir(user_id)
         data_dir.mkdir(parents=True, exist_ok=True)
 
         return {
             "saved": True,
             "config_path": str(cp),
             "profile": config["profile"],
-            "targets": config["targets"],
+            "targets": config.get("targets", {}),
+            "intake": config.get("intake", {}),
+        }
+
+    @mcp.tool()
+    def get_user_profile(user_id: str | None = None) -> dict:
+        """Retrieve full user profile including intake data, targets, and active protocols. Useful for understanding a user's context before coaching."""
+        config = _load_config(user_id)
+        data_dir = _data_dir(user_id)
+        has_data = {}
+        for name in ["weight_log.csv", "bp_log.csv", "meal_log.csv", "daily_habits.csv",
+                      "garmin_latest.json", "lab_results.json"]:
+            has_data[name] = (data_dir / name).exists()
+        return {
+            "profile": config.get("profile", {}),
+            "targets": config.get("targets", {}),
+            "intake": config.get("intake", {}),
+            "focus": config.get("focus", []),
+            "data_dir": str(data_dir),
+            "data_available": has_data,
         }
 
 

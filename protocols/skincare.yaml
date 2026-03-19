@@ -1,0 +1,52 @@
+# Skincare Protocol
+# CeraVe-based retinoid ramp with 12-week assessment
+
+name: Skincare
+description: >
+  CeraVe-based skincare protocol. AM: cleanser + vitamin C serum + SPF 30+.
+  PM: serum + retinoid (ramping from 2x/week to nightly). Dermatologist
+  confirmed no laser needed at 35 — consistent retinoid use does 80% of
+  the work. 12-week checkpoint May 22, 2026.
+
+habits:
+  - id: am_skincare
+    label: AM routine (cleanser + serum + SPF)
+    priority: 1
+    nudge: "Sunscreen is non-negotiable with retinoid use. Apply even on cloudy days."
+  - id: pm_skincare
+    label: PM routine (serum + moisturizer)
+    priority: 2
+    nudge: "Consistency beats intensity. Even serum-only nights count."
+  - id: pm_retinoid
+    label: Retinoid applied (scheduled nights)
+    priority: 3
+    nudge: "Current schedule: 2x/week. Ramp to every-other-night after 2 weeks if no irritation."
+
+outcome_metrics: []
+
+phases:
+  - name: "Retinoid introduction"
+    weeks: [1, 2]
+    focus: >
+      2x/week retinoid (Wed + Sat nights). Monitor for dryness, peeling,
+      redness. This is retinization — normal and expected. Moisturize after.
+  - name: "Ramp up"
+    weeks: [3, 4, 5, 6]
+    focus: >
+      If tolerated, increase to every other night. If irritation persists,
+      stay at 2x/week. Add Paula's Choice 8% AHA on non-retinoid nights
+      starting week 5.
+  - name: "Full routine"
+    weeks: [7, 8, 9, 10, 11, 12]
+    focus: >
+      Working toward nightly retinoid if tolerated. Full routine locked in.
+      Collagen remodeling takes 12 weeks — don't expect visible change
+      before the checkpoint.
+
+checkpoints:
+  - week: 4
+    action: "Monthly photo. Assess irritation level. Decide on ramp to every-other-night."
+  - week: 8
+    action: "Monthly photo. AHA should be integrated. Visible texture improvement possible."
+  - week: 12
+    action: "12-week assessment (May 22). Compare photos. Decide: continue, step up product, or add treatment."

@@ -14,7 +14,10 @@ import yaml
 from engine.models import Demographics, UserProfile
 from engine.scoring.engine import score_profile
 from engine.insights.engine import generate_insights, load_rules
-from engine.insights.coaching import assess_sleep_debt, assess_deficit_impact, assess_taper_readiness
+from engine.insights.coaching import (
+    assess_sleep_debt, assess_deficit_impact, assess_taper_readiness,
+    assess_sleep_deficit_interaction, assess_nutrition_deviation,
+)
 from engine.insights.patterns import detect_patterns, summarize_patterns
 from engine.tracking.weight import rolling_average, weekly_rate, projected_date, rate_assessment
 from engine.tracking.nutrition import remaining_to_hit, daily_totals, protein_check
@@ -37,7 +40,11 @@ def build_briefing(config: dict) -> dict:
         Dict with sections: meta, score, insights, weight, nutrition,
         strength, habits, garmin, coaching, gaps
     """
-    data_dir = Path(config.get("data_dir", "./data"))
+    raw_data_dir = Path(config.get("data_dir", "./data"))
+    if raw_data_dir.is_absolute():
+        data_dir = raw_data_dir
+    else:
+        data_dir = (Path(__file__).parent.parent.parent / raw_data_dir).resolve()
     profile_cfg = config.get("profile", {})
     targets = config.get("targets", {})
     today = datetime.now().strftime("%Y-%m-%d")
@@ -59,6 +66,10 @@ def build_briefing(config: dict) -> dict:
     wearable = garmin or apple_health
     wearable_source = "garmin" if garmin else ("apple_health" if apple_health else None)
 
+    # --- Daily burn (Garmin TDEE data) ---
+    daily_burn = _load_json(data_dir / "garmin_daily_burn.json")
+    briefing["data_available"]["garmin_daily_burn"] = daily_burn is not None
+
     if wearable:
         briefing["wearable_source"] = wearable_source
         briefing["garmin"] = {
@@ -71,6 +82,30 @@ def build_briefing(config: dict) -> dict:
             "daily_steps_avg": wearable.get("daily_steps_avg"),
             "zone2_min_per_week": wearable.get("zone2_min_per_week"),
         }
+
+    # Add daily burn / TDEE to briefing
+    if daily_burn and isinstance(daily_burn, list):
+        today_burn = next((d for d in daily_burn if d.get("date") == today), None)
+        burn_section = {
+            "today": today_burn,
+            "recent": daily_burn,
+        }
+        # Compute 7-day average TDEE (excluding today if partial)
+        completed_days = [d for d in daily_burn if d.get("date") != today and d.get("total")]
+        if completed_days:
+            burn_section["avg_tdee_7d"] = round(
+                sum(d["total"] for d in completed_days) / len(completed_days)
+            )
+        briefing["daily_burn"] = burn_section
+
+    # Add today's daily snapshot from garmin_daily.json
+    if garmin_daily and isinstance(garmin_daily, list):
+        today_daily = next((d for d in garmin_daily if d.get("date") == today), None)
+        if not today_daily:
+            # Fall back to most recent day
+            today_daily = garmin_daily[-1] if garmin_daily else None
+        if today_daily:
+            briefing["today_snapshot"] = today_daily
 
     # --- Score ---
     demo = Demographics(
@@ -182,7 +217,13 @@ def build_briefing(config: dict) -> dict:
     briefing["data_available"]["bp_log"] = bp_data is not None
 
     rules_file = config.get("insights", {}).get("thresholds_file")
-    rules = load_rules(rules_file) if rules_file else load_rules()
+    if rules_file:
+        p = Path(rules_file)
+        if not p.is_absolute():
+            p = Path(__file__).parent.parent.parent / rules_file
+        rules = load_rules(str(p))
+    else:
+        rules = load_rules()
 
     insights = generate_insights(
         garmin=wearable,
@@ -191,8 +232,16 @@ def build_briefing(config: dict) -> dict:
         trends=trends,
         rules=rules,
     )
+    # Compute weight rate early (needed by pattern detection)
+    # weekly_rate() returns negative for weight loss; loss_rate is positive when losing
+    rate = None
+    loss_rate = None
+    if weights_data and len(weights_data) >= 2:
+        rate = weekly_rate(weights_data)
+        loss_rate = abs(rate) if rate and rate < 0 else 0
+
     # Pattern detection — cross-metric interaction signals
-    patterns = detect_patterns(profile, garmin=wearable)
+    patterns = detect_patterns(profile, garmin=wearable, weekly_loss_rate=loss_rate)
     all_insights = insights + patterns
 
     briefing["insights"] = [
@@ -201,12 +250,11 @@ def build_briefing(config: dict) -> dict:
     ]
 
     # Structured pattern summaries for dashboard
-    briefing["patterns"] = summarize_patterns(profile, garmin=wearable)
+    briefing["patterns"] = summarize_patterns(profile, garmin=wearable, weekly_loss_rate=loss_rate)
 
     # --- Weight ---
     if weights_data and len(weights_data) >= 2:
         rolled = rolling_average(weights_data)
-        rate = weekly_rate(weights_data)
         current = weights_data[-1]["weight"]
         target_w = targets.get("weight_lbs")
 
@@ -236,10 +284,21 @@ def build_briefing(config: dict) -> dict:
         briefing["nutrition"] = {"today_totals": totals}
 
         if targets.get("protein_g") or targets.get("calories_training"):
+            # Use rest-day calories if available and no workout today
+            cal_target = targets.get("calories_training", 0)
+            if targets.get("calories_rest"):
+                # Check if today had a workout (from Garmin workouts)
+                workouts_data = _load_json(data_dir / "garmin_workouts.json")
+                has_workout_today = False
+                if workouts_data and isinstance(workouts_data, list):
+                    has_workout_today = any(w.get("date") == today for w in workouts_data)
+                if not has_workout_today:
+                    cal_target = targets["calories_rest"]
             macro_targets = {
                 "protein": targets.get("protein_g", 0),
-                "calories": targets.get("calories_training", 0),
+                "calories": cal_target,
             }
+            briefing.setdefault("nutrition", {})["day_type"] = "training" if cal_target == targets.get("calories_training", 0) else "rest"
             remaining = remaining_to_hit(meals_today, macro_targets)
             briefing["nutrition"]["remaining"] = remaining
 
@@ -366,7 +425,7 @@ def build_briefing(config: dict) -> dict:
                 weeks_in_deficit=None,  # TODO: track deficit start date in config
                 weight_current=current_w,
                 weight_target=target_w,
-                weekly_loss_rate=rate,
+                weekly_loss_rate=loss_rate,
             )
             if taper:
                 coaching_signals.append({
@@ -374,6 +433,44 @@ def build_briefing(config: dict) -> dict:
                     "title": taper.title,
                     "body": taper.body,
                 })
+
+    # Sleep-deficit interaction signal
+    if wearable:
+        sleep_deficit = assess_sleep_deficit_interaction(
+            sleep_hrs_avg=wearable.get("sleep_duration_avg"),
+            sleep_regularity=wearable.get("sleep_regularity_stddev"),
+            weekly_loss_rate=loss_rate,
+            hrv=wearable.get("hrv_rmssd_avg"),
+        )
+        if sleep_deficit:
+            coaching_signals.append({
+                "severity": sleep_deficit.severity,
+                "category": sleep_deficit.category,
+                "title": sleep_deficit.title,
+                "body": sleep_deficit.body,
+            })
+
+    # Nutrition deviation flags (surplus + late eating)
+    if meals_today:
+        cal_target = targets.get("calories_training")
+        bed_time_val = None
+        if habit_data:
+            today_habits = [h for h in habit_data if h.get("date") == today]
+            if today_habits:
+                bed_time_val = today_habits[-1].get("bed_time")
+        deviations = assess_nutrition_deviation(
+            meals_today=meals_today,
+            cal_target=cal_target,
+            bed_time=bed_time_val,
+            as_of_hour=datetime.now().hour,
+        )
+        for dev in deviations:
+            coaching_signals.append({
+                "severity": dev.severity,
+                "category": dev.category,
+                "title": dev.title,
+                "body": dev.body,
+            })
 
     if coaching_signals:
         briefing["coaching_signals"] = coaching_signals
