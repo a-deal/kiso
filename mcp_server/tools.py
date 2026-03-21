@@ -412,6 +412,49 @@ def register_tools(mcp: FastMCP):
         return {"logged": True, "date": date, "meal_num": meal_num, "description": description, "protein_g": protein_g}
 
     @mcp.tool()
+    def get_meals(
+        date: str | None = None,
+        days: int = 1,
+        user_id: str | None = None,
+    ) -> dict:
+        """Get meals for a given date (or last N days). Returns meals, totals, and remaining macros.
+        Use this when the user asks about past meals, yesterday's nutrition, or weekly intake.
+        Date defaults to today. Set days > 1 to get a range ending on that date."""
+        from engine.tracking.nutrition import daily_totals, remaining_to_hit
+        date = date or datetime.now().strftime("%Y-%m-%d")
+        data_dir = _data_dir(user_id)
+        path = data_dir / "meal_log.csv"
+        rows = read_csv(path)
+
+        # Build list of dates to query
+        from datetime import timedelta
+        end = datetime.strptime(date, "%Y-%m-%d")
+        dates = [(end - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+        result = {}
+        for d in sorted(dates):
+            day_meals = [r for r in rows if r.get("date") == d]
+            if day_meals:
+                totals = daily_totals(day_meals)
+                day_result = {"meals": day_meals, "totals": totals}
+
+                # Add remaining if we have targets
+                config = _load_config(user_id)
+                targets = config.get("targets", {})
+                if targets:
+                    cal_target = targets.get("calories_training", targets.get("calories_rest"))
+                    protein_target = targets.get("protein_g")
+                    if cal_target and protein_target:
+                        macro_targets = {"calories": cal_target, "protein_g": protein_target}
+                        day_result["remaining"] = remaining_to_hit(day_meals, macro_targets)
+
+                result[d] = day_result
+            else:
+                result[d] = {"meals": [], "totals": {"protein_g": 0, "calories": 0}}
+
+        return result
+
+    @mcp.tool()
     def log_medication(
         name: str,
         dose: str,
