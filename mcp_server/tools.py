@@ -417,14 +417,25 @@ def register_tools(mcp: FastMCP):
         days: int = 1,
         user_id: str | None = None,
     ) -> dict:
-        """Get meals for a given date (or last N days). Returns meals, totals, and remaining macros.
-        Use this when the user asks about past meals, yesterday's nutrition, or weekly intake.
-        Date defaults to today. Set days > 1 to get a range ending on that date."""
+        """Get meals and Garmin calorie burn for a given date (or last N days).
+        Returns meals, totals, remaining macros, and Garmin daily burn (total/active/BMR).
+        Compares intake vs burn to show actual surplus/deficit.
+        Use this when the user asks about past meals, yesterday's nutrition, weekly intake,
+        or calorie balance. Date defaults to today. Set days > 1 for a range."""
         from engine.tracking.nutrition import daily_totals, remaining_to_hit
         date = date or datetime.now().strftime("%Y-%m-%d")
         data_dir = _data_dir(user_id)
         path = data_dir / "meal_log.csv"
         rows = read_csv(path)
+
+        # Load Garmin daily burn data
+        burn_by_date = {}
+        burn_path = data_dir / "garmin_daily_burn.json"
+        if burn_path.exists():
+            with open(burn_path) as f:
+                burns = json.load(f)
+            for b in burns:
+                burn_by_date[b["date"]] = b
 
         # Build list of dates to query
         from datetime import timedelta
@@ -447,10 +458,27 @@ def register_tools(mcp: FastMCP):
                     if cal_target and protein_target:
                         macro_targets = {"calories": cal_target, "protein_g": protein_target}
                         day_result["remaining"] = remaining_to_hit(day_meals, macro_targets)
-
-                result[d] = day_result
             else:
-                result[d] = {"meals": [], "totals": {"protein_g": 0, "calories": 0}}
+                totals = {"protein_g": 0, "calories": 0}
+                day_result = {"meals": [], "totals": totals}
+
+            # Add Garmin burn data and compute surplus/deficit
+            burn = burn_by_date.get(d)
+            if burn and burn.get("total"):
+                day_result["garmin_burn"] = {
+                    "total": burn["total"],
+                    "active": burn.get("active"),
+                    "bmr": burn.get("bmr"),
+                }
+                intake = float(totals.get("calories", 0) or 0)
+                day_result["calorie_balance"] = {
+                    "intake": intake,
+                    "burn": burn["total"],
+                    "surplus_deficit": round(intake - burn["total"]),
+                    "status": "surplus" if intake > burn["total"] else "deficit",
+                }
+
+            result[d] = day_result
 
         return result
 
