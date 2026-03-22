@@ -121,7 +121,9 @@ async def api_handler(tool_name: str, request: Request, token: str = Query(...))
 
     try:
         result = TOOL_REGISTRY[tool_name](**params)
-        return JSONResponse(content=result, default=str)
+        # Serialize with default=str to handle datetime, Path, etc.
+        serialized = json.loads(json.dumps(result, default=str))
+        return JSONResponse(content=serialized)
     except TypeError as e:
         raise HTTPException(400, f"Parameter error: {e}")
     except Exception as e:
