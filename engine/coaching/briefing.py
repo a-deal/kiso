@@ -54,17 +54,34 @@ def build_briefing(config: dict) -> dict:
         "data_available": {},
     }
 
-    # --- Wearable data (Garmin preferred, Apple Health fallback) ---
+    # --- Wearable data (priority: garmin > oura > whoop > apple_health) ---
     garmin = _load_json(data_dir / "garmin_latest.json")
+    oura = _load_json(data_dir / "oura_latest.json")
+    whoop = _load_json(data_dir / "whoop_latest.json")
     apple_health = _load_json(data_dir / "apple_health_latest.json")
     garmin_daily = _load_json(data_dir / "garmin_daily.json")
+    oura_daily = _load_json(data_dir / "oura_daily.json")
+    whoop_daily = _load_json(data_dir / "whoop_daily.json")
     briefing["data_available"]["garmin"] = garmin is not None
+    briefing["data_available"]["oura"] = oura is not None
+    briefing["data_available"]["whoop"] = whoop is not None
     briefing["data_available"]["apple_health"] = apple_health is not None
     briefing["data_available"]["garmin_daily"] = garmin_daily is not None
+    briefing["data_available"]["oura_daily"] = oura_daily is not None
+    briefing["data_available"]["whoop_daily"] = whoop_daily is not None
 
-    # Use Garmin if available, otherwise fall back to Apple Health
-    wearable = garmin or apple_health
-    wearable_source = "garmin" if garmin else ("apple_health" if apple_health else None)
+    # Use Garmin if available, then Oura, then WHOOP, then Apple Health
+    wearable = garmin or oura or whoop or apple_health
+    if garmin:
+        wearable_source = "garmin"
+    elif oura:
+        wearable_source = "oura"
+    elif whoop:
+        wearable_source = "whoop"
+    elif apple_health:
+        wearable_source = "apple_health"
+    else:
+        wearable_source = None
 
     # --- Daily burn (Garmin TDEE data) ---
     daily_burn = _load_json(data_dir / "garmin_daily_burn.json")
@@ -98,12 +115,13 @@ def build_briefing(config: dict) -> dict:
             )
         briefing["daily_burn"] = burn_section
 
-    # Add today's daily snapshot from garmin_daily.json
-    if garmin_daily and isinstance(garmin_daily, list):
-        today_daily = next((d for d in garmin_daily if d.get("date") == today), None)
+    # Add today's daily snapshot from daily series (garmin or oura or whoop)
+    daily_series = garmin_daily or oura_daily or whoop_daily
+    if daily_series and isinstance(daily_series, list):
+        today_daily = next((d for d in daily_series if d.get("date") == today), None)
         if not today_daily:
             # Fall back to most recent day
-            today_daily = garmin_daily[-1] if garmin_daily else None
+            today_daily = daily_series[-1] if daily_series else None
         if today_daily:
             briefing["today_snapshot"] = today_daily
 
@@ -212,7 +230,7 @@ def build_briefing(config: dict) -> dict:
     # --- Insights ---
     weights_data = _load_weight_log(data_dir)
     bp_data = _load_bp_log(data_dir)
-    trends = _build_trends(garmin_daily)
+    trends = _build_trends(garmin_daily or oura_daily or whoop_daily)
     briefing["data_available"]["weight_log"] = weights_data is not None
     briefing["data_available"]["bp_log"] = bp_data is not None
 

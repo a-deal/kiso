@@ -162,6 +162,70 @@ When a user asks "why do you measure this?" or "how does scoring work?", read th
 
 Don't lecture. Share one insight at a time when it's relevant to what the user is asking about.
 
+## Agent Workspace (Milo on Mac Mini)
+
+The coaching agent (Milo) runs on the Mac Mini via OpenClaw. Its workspace files live in two places:
+
+- **Source of truth (local)**: `workspace/` directory in this repo
+- **Deployed (Mac Mini)**: `~/.openclaw/workspace/` on `mac-mini`
+
+### Which files the agent sees
+
+OpenClaw only loads these 8 filenames at bootstrap. Nothing else is auto-loaded:
+`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `USER.md`, `IDENTITY.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`
+
+Plus `users.yaml` (read on demand by the agent). Any other filename (like COACH.md) is invisible to the agent. All coaching content must live in one of the 8 recognized files.
+
+- `bootstrapMaxChars`: 40,000 per file (config). Files exceeding this get truncated 70/20/10.
+- `bootstrapTotalMaxChars`: 150,000 across all files (default).
+
+### Deploying workspace changes
+
+When Andrew asks to update coaching instructions, the agent's workspace files, or anything Milo says/does:
+
+1. Edit the files in `workspace/` (this repo, local)
+2. Deploy and reset the relevant user's session:
+
+```bash
+cd /Users/adeal/src/health-engine
+
+# Copy files to Mac Mini + reset one user's session (no gateway restart)
+./deploy-coach.sh workspace --reset +14152009584
+
+# Copy files + reset ALL WhatsApp sessions
+./deploy-coach.sh workspace --reset all
+
+# Copy files + full gateway restart (nuclear, use sparingly)
+./deploy-coach.sh
+```
+
+The `--reset` flag uses `openclaw gateway call sessions.reset` which archives the old session and re-sends the system prompt on the next message. Zero tokens, no agent turn.
+
+### Adding a new user
+
+1. Add their phone number to `workspace/users.yaml`
+2. Create their data directory: `ssh mac-mini "mkdir -p ~/src/health-engine/data/users/<user_id>"`
+3. Deploy: `./deploy-coach.sh workspace --reset all`
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `AGENTS.md` | Coaching methodology, onboarding flow, program engine, habit check-ins, self-improvement rules |
+| `SOUL.md` | Identity, voice, data rules, multi-user routing, meal logging rules |
+| `TOOLS.md` | Health-engine API reference |
+| `USER.md` | Andrew's profile, protocols, daily structure |
+| `HEARTBEAT.md` | Proactive monitoring schedule |
+| `users.yaml` | Phone-to-user_id mapping, test_mode flags |
+
+### Session stickiness
+
+Active sessions cache the workspace files. Changes to workspace files are NOT picked up until the session resets. Always reset sessions after deploying.
+
+### Test mode
+
+Set `test_mode: new_user` on a user's entry in `users.yaml` to make Milo treat them as brand new (runs full onboarding). Remove the flag when done testing.
+
 ## Docs
 
 - `docs/METHODOLOGY.md` — **Full methodology reference** — why we score each metric, evidence sources, clinical thresholds

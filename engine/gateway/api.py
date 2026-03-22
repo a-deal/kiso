@@ -11,11 +11,13 @@ import inspect
 import json
 import logging
 import os
+import shutil
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, Query, Request
+from fastapi import HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
 from mcp_server.tools import TOOL_REGISTRY
@@ -126,21 +128,35 @@ def _coerce_params(tool_name: str, params: dict) -> dict:
     return coerced
 
 
-async def api_handler(tool_name: str, request: Request, token: str = Query(...)):
+async def api_handler(tool_name: str, request: Request, token: str = Query(None)):
     """Generic handler for /api/{tool_name}.
 
     If tool_name ends with _async, dispatches to the background job handler.
+    Token can be passed as query param OR in JSON body (for iOS Shortcuts).
     """
     config = request.app.state.config
 
+    # Parse POST body early so we can extract token from it if needed
+    body = {}
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                body = {}
+        except Exception:
+            body = {}
+
+    # Accept token from query string or JSON body
+    effective_token = token or body.get("token")
+
     if not config.api_token:
         raise HTTPException(500, "API token not configured on server")
-    if token != config.api_token:
+    if not effective_token or effective_token != config.api_token:
         raise HTTPException(403, "Invalid token")
 
     # Route _async suffix to background handler
     if tool_name.endswith("_async"):
-        return await api_async_handler(tool_name, request, token)
+        return await api_async_handler(tool_name, request, effective_token)
 
     if tool_name not in TOOL_REGISTRY:
         raise HTTPException(404, f"Unknown tool: {tool_name}")
@@ -149,13 +165,9 @@ async def api_handler(tool_name: str, request: Request, token: str = Query(...))
     params = dict(request.query_params)
     params.pop("token", None)
 
-    if request.method == "POST":
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                params.update(body)
-        except Exception:
-            pass
+    if body:
+        params.update(body)
+    params.pop("token", None)
 
     # Coerce types to match function signatures
     params = _coerce_params(tool_name, params)
@@ -281,3 +293,99 @@ async def api_job_status(request: Request, token: str = Query(...), job_id: str 
         raise HTTPException(404, f"Unknown job: {job_id}")
 
     return JSONResponse(content={"job_id": job_id, **job})
+
+
+# Supported upload types and their corresponding tool functions
+_UPLOAD_TYPES = {
+    "apple_health": "import_apple_health",
+}
+
+# Allowed file extensions per upload type
+_UPLOAD_EXTENSIONS = {
+    "apple_health": {".zip", ".xml"},
+}
+
+
+async def api_upload(
+    request: Request,
+    token: str = Query(...),
+    user_id: str = Query("default"),
+    type: str = Query(..., description="Upload type, e.g. 'apple_health'"),
+    file: UploadFile = File(...),
+):
+    """Accept file uploads and route to the appropriate import tool.
+
+    POST /api/upload?token=...&user_id=...&type=apple_health
+    Content-Type: multipart/form-data
+    Body: file=<the export ZIP or XML>
+
+    Saves the uploaded file to a temp location, calls the import tool,
+    cleans up, and returns import results.
+    """
+    config = request.app.state.config
+    if not config.api_token:
+        raise HTTPException(500, "API token not configured on server")
+    if token != config.api_token:
+        raise HTTPException(403, "Invalid token")
+
+    if type not in _UPLOAD_TYPES:
+        raise HTTPException(
+            400,
+            f"Unsupported upload type: {type}. Supported: {list(_UPLOAD_TYPES.keys())}",
+        )
+
+    # Validate file extension
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    allowed = _UPLOAD_EXTENSIONS.get(type, set())
+    if allowed and ext not in allowed:
+        raise HTTPException(
+            400,
+            f"Invalid file type '{ext}' for {type}. Accepted: {sorted(allowed)}",
+        )
+
+    # Validate file size (100MB max for Apple Health exports)
+    max_size = 100 * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            400,
+            f"File too large ({len(content) / 1024 / 1024:.1f}MB). Max: {max_size / 1024 / 1024:.0f}MB.",
+        )
+
+    tool_name = _UPLOAD_TYPES[type]
+    if tool_name not in TOOL_REGISTRY:
+        raise HTTPException(500, f"Import tool '{tool_name}' not found in registry")
+
+    start = time.monotonic()
+    tmp_path = None
+
+    try:
+        # Save to temp file preserving extension
+        suffix = ext or ".tmp"
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=f"he_upload_{type}_")
+        os.write(fd, content)
+        os.close(fd)
+
+        # Call the import tool
+        params = {"file_path": tmp_path, "user_id": user_id}
+        result = TOOL_REGISTRY[tool_name](**params)
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        serialized = json.loads(json.dumps(result, default=str))
+        _audit_log(tool_name, user_id, {"type": type, "filename": filename}, serialized, None, elapsed_ms)
+        return JSONResponse(content=serialized)
+
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        _audit_log(tool_name, user_id, {"type": type, "filename": filename}, None, str(e), elapsed_ms)
+        logger.exception(f"Upload handler failed for type={type}")
+        raise HTTPException(500, f"Import error: {e}")
+
+    finally:
+        # Clean up temp file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

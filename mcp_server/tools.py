@@ -166,6 +166,9 @@ _LAB_ALIASES: dict[str, str] = {
     "uric acid": "uric_acid",
     "bun": "bun", "blood urea nitrogen": "bun",
     "mma": "mma", "methylmalonic acid": "mma",
+    # Kidney
+    "egfr": "egfr", "estimated gfr": "egfr", "glomerular filtration rate": "egfr",
+    "estimated glomerular filtration rate": "egfr", "gfr": "egfr",
 }
 
 # Sanity ranges: (min, max) — values outside trigger a warning but still store
@@ -183,6 +186,7 @@ _LAB_RANGES: dict[str, tuple[float, float]] = {
     "uric_acid": (0.5, 20), "bun": (1, 150), "t4_free": (0.1, 10),
     "t3_free": (0.5, 15), "prolactin": (0.1, 500), "leptin": (0.1, 200),
     "mma": (10, 5000), "iron_saturation_pct": (1, 100),
+    "egfr": (5, 200),
 }
 
 # Fields that feed into UserProfile scoring
@@ -855,8 +859,194 @@ def _connect_garmin(user_id: str | None = None) -> dict:
     }
 
 
+def _auth_oura(user_id: str | None = None) -> dict:
+    """Kick off Oura OAuth flow. Requires oura.client_id and oura.client_secret in gateway.yaml."""
+    from engine.gateway.config import load_gateway_config
+    from engine.integrations.oura_auth import run_auth_flow
+
+    gw_config = load_gateway_config()
+    oura_cfg = gw_config.oura
+    client_id = oura_cfg.get("client_id")
+    client_secret = oura_cfg.get("client_secret")
+
+    if not client_id or not client_secret:
+        return {
+            "authenticated": False,
+            "error": "Oura OAuth not configured. Add oura.client_id and oura.client_secret to gateway.yaml.",
+        }
+
+    uid = user_id or "default"
+    return run_auth_flow(
+        client_id=client_id,
+        client_secret=client_secret,
+        user_id=uid,
+    )
+
+
+def _pull_oura(history: bool = False, user_id: str | None = None) -> dict:
+    """Pull health metrics from Oura Ring API."""
+    from engine.integrations.oura import OuraClient
+
+    uid = user_id or "default"
+    config = _load_config(user_id)
+    data_dir_path = str(_data_dir(uid)) if uid and uid != "default" else config.get("data_dir", "./data")
+
+    try:
+        client = OuraClient(
+            user_id=uid,
+            data_dir=data_dir_path,
+        )
+        result = client.pull_all(history=history, history_days=90)
+
+        # Rebuild briefing
+        if uid and uid != "default":
+            config["data_dir"] = data_dir_path
+        from engine.coaching.briefing import build_briefing
+        briefing = build_briefing(config)
+        briefing_dir = Path(data_dir_path)
+        briefing_dir.mkdir(parents=True, exist_ok=True)
+        with open(briefing_dir / "briefing.json", "w") as f:
+            json.dump(briefing, f, indent=2, default=str)
+
+        return {
+            "pulled": True,
+            "metrics": result,
+            "briefing_refreshed": True,
+        }
+    except Exception as e:
+        return {
+            "pulled": False,
+            "error": str(e),
+            "hint": "If tokens expired, use auth_oura to re-authenticate.",
+        }
+
+
+def _connect_oura(user_id: str | None = None) -> dict:
+    """Check Oura connection status."""
+    from engine.integrations.oura import OuraClient
+
+    uid = user_id or "default"
+    has_tokens = OuraClient.has_tokens(user_id=uid)
+
+    data_dir = _data_dir(uid)
+    oura_path = data_dir / "oura_latest.json"
+    has_data = oura_path.exists()
+    freshness = None
+    if has_data:
+        with open(oura_path) as f:
+            oura = json.load(f)
+        freshness = oura.get("last_updated")
+
+    if not has_tokens:
+        hint = "No Oura tokens found. Use auth_oura tool to authenticate via browser."
+    elif not has_data:
+        hint = "Tokens cached but no data yet. Use pull_oura tool to fetch metrics."
+    else:
+        hint = "Connected. Use pull_oura tool to refresh data."
+
+    return {
+        "tokens_cached": has_tokens,
+        "has_data": has_data,
+        "last_updated": freshness,
+        "hint": hint,
+    }
+
+
+def _auth_whoop(user_id: str | None = None) -> dict:
+    """Kick off WHOOP OAuth flow. Requires whoop.client_id and whoop.client_secret in gateway.yaml."""
+    from engine.gateway.config import load_gateway_config
+    from engine.integrations.whoop_auth import run_auth_flow
+
+    gw_config = load_gateway_config()
+    whoop_cfg = gw_config.whoop
+    client_id = whoop_cfg.get("client_id")
+    client_secret = whoop_cfg.get("client_secret")
+
+    if not client_id or not client_secret:
+        return {
+            "authenticated": False,
+            "error": "WHOOP OAuth not configured. Add whoop.client_id and whoop.client_secret to gateway.yaml.",
+        }
+
+    uid = user_id or "default"
+    return run_auth_flow(
+        client_id=client_id,
+        client_secret=client_secret,
+        user_id=uid,
+    )
+
+
+def _pull_whoop(history: bool = False, user_id: str | None = None) -> dict:
+    """Pull health metrics from WHOOP API."""
+    from engine.integrations.whoop import WhoopClient
+
+    uid = user_id or "default"
+    config = _load_config(user_id)
+    data_dir_path = str(_data_dir(uid)) if uid and uid != "default" else config.get("data_dir", "./data")
+
+    try:
+        client = WhoopClient(
+            user_id=uid,
+            data_dir=data_dir_path,
+        )
+        result = client.pull_all(history=history, history_days=90)
+
+        # Rebuild briefing
+        if uid and uid != "default":
+            config["data_dir"] = data_dir_path
+        from engine.coaching.briefing import build_briefing
+        briefing = build_briefing(config)
+        briefing_dir = Path(data_dir_path)
+        briefing_dir.mkdir(parents=True, exist_ok=True)
+        with open(briefing_dir / "briefing.json", "w") as f:
+            json.dump(briefing, f, indent=2, default=str)
+
+        return {
+            "pulled": True,
+            "metrics": result,
+            "briefing_refreshed": True,
+        }
+    except Exception as e:
+        return {
+            "pulled": False,
+            "error": str(e),
+            "hint": "If tokens expired, use auth_whoop to re-authenticate.",
+        }
+
+
+def _connect_whoop(user_id: str | None = None) -> dict:
+    """Check WHOOP connection status."""
+    from engine.integrations.whoop import WhoopClient
+
+    uid = user_id or "default"
+    has_tokens = WhoopClient.has_tokens(user_id=uid)
+
+    data_dir = _data_dir(uid)
+    whoop_path = data_dir / "whoop_latest.json"
+    has_data = whoop_path.exists()
+    freshness = None
+    if has_data:
+        with open(whoop_path) as f:
+            whoop = json.load(f)
+        freshness = whoop.get("last_updated")
+
+    if not has_tokens:
+        hint = "No WHOOP tokens found. Use auth_whoop tool to authenticate via browser."
+    elif not has_data:
+        hint = "Tokens cached but no data yet. Use pull_whoop tool to fetch metrics."
+    else:
+        hint = "Connected. Use pull_whoop tool to refresh data."
+
+    return {
+        "tokens_cached": has_tokens,
+        "has_data": has_data,
+        "last_updated": freshness,
+        "hint": hint,
+    }
+
+
 def _connect_wearable(service: str, user_id: str = "default") -> dict:
-    supported = ["garmin"]
+    supported = ["garmin", "oura", "whoop"]
     if service not in supported:
         return {
             "error": f"Unsupported service: {service}. Supported: {', '.join(supported)}",
@@ -1530,6 +1720,210 @@ def _get_skill_ladder(goal_id: str) -> dict:
     }
 
 
+def _check_health_priorities_tool(user_id: str | None = None) -> dict:
+    """Check all available health data for red-flag conditions.
+
+    Loads labs, BP, and profile info, runs flag checks, and returns
+    structured results with severity, coaching language, and goal connections.
+    """
+    from engine.coaching.health_flags import check_health_priorities
+
+    config = _load_config(user_id)
+    data_dir = _data_dir(user_id)
+    profile_cfg = config.get("profile", {})
+    intake_cfg = config.get("intake", {})
+
+    # Load labs
+    lab_path = data_dir / "lab_results.json"
+    labs: dict = {}
+    if lab_path.exists():
+        with open(lab_path) as f:
+            lab_data = json.load(f)
+        labs = lab_data.get("latest", {})
+
+    # Load latest BP
+    bp_systolic = None
+    bp_diastolic = None
+    bp_rows = read_csv(data_dir / "bp_log.csv")
+    if bp_rows:
+        try:
+            bp_systolic = float(bp_rows[-1]["systolic"])
+            bp_diastolic = float(bp_rows[-1]["diastolic"])
+        except (KeyError, ValueError):
+            pass
+
+    # Determine sex
+    sex = profile_cfg.get("sex")
+
+    # Determine current goal
+    current_goal = None
+    goals = intake_cfg.get("goals")
+    if goals:
+        if isinstance(goals, list) and goals:
+            current_goal = goals[0]
+        elif isinstance(goals, str):
+            current_goal = goals
+
+    result = check_health_priorities(
+        labs=labs,
+        bp_systolic=bp_systolic,
+        bp_diastolic=bp_diastolic,
+        sex=sex,
+        current_goal=current_goal,
+    )
+    return result.to_dict()
+
+
+# =====================================================================
+# Apple Health Shortcut ingest
+# =====================================================================
+
+# Valid metric keys that the Shortcut can send
+_APPLE_HEALTH_METRICS = {
+    "resting_hr", "hrv_sdnn", "steps", "sleep_hours",
+    "sleep_start", "sleep_end", "weight_lbs", "vo2_max",
+    "blood_oxygen", "active_calories", "respiratory_rate",
+}
+
+
+def _ingest_health_snapshot(
+    user_id: str,
+    metrics: dict,
+    timestamp: str | None = None,
+) -> dict:
+    """Ingest a daily health snapshot from an iOS Shortcut (Apple Health bridge).
+
+    Accepts a flat dict of metrics from HealthKit, appends to a daily time
+    series file, and updates a rolling-average latest file for scoring.
+
+    Args:
+        user_id: User identifier (e.g. 'paul')
+        metrics: Dict of metric_name -> value. All optional individually.
+        timestamp: ISO 8601 timestamp of when the snapshot was taken.
+
+    Returns:
+        Summary of what was stored.
+    """
+    if not user_id:
+        return {"ingested": False, "error": "user_id is required"}
+    if not metrics or not isinstance(metrics, dict):
+        return {"ingested": False, "error": "metrics dict is required and must be non-empty"}
+
+    # Filter to known metrics, skip None values
+    clean = {}
+    unknown = []
+    for k, v in metrics.items():
+        if k in _APPLE_HEALTH_METRICS:
+            if v is not None:
+                clean[k] = v
+        else:
+            unknown.append(k)
+
+    if not clean:
+        return {
+            "ingested": False,
+            "error": "No valid metrics provided",
+            "valid_keys": sorted(_APPLE_HEALTH_METRICS),
+        }
+
+    ts = timestamp or datetime.now().astimezone().isoformat()
+
+    # Build the daily entry
+    entry = {"timestamp": ts, **clean}
+
+    # Add HRV method metadata if SDNN was provided
+    if "hrv_sdnn" in clean:
+        entry["hrv_method"] = "SDNN"
+
+    data_dir = _data_dir(user_id)
+    daily_path = data_dir / "apple_health_daily.json"
+    latest_path = data_dir / "apple_health_latest.json"
+
+    # --- Append to daily time series ---
+    series = []
+    if daily_path.exists():
+        try:
+            with open(daily_path) as f:
+                series = json.load(f)
+            if not isinstance(series, list):
+                series = []
+        except (json.JSONDecodeError, IOError):
+            series = []
+
+    series.append(entry)
+
+    with open(daily_path, "w") as f:
+        json.dump(series, f, indent=2)
+
+    # --- Update latest.json with rolling averages ---
+    # Use up to last 7 entries for averages (like garmin_latest.json)
+    recent = series[-7:]
+
+    def _rolling_avg(key: str) -> float | None:
+        vals = [e[key] for e in recent if key in e and e[key] is not None]
+        if not vals:
+            return None
+        return round(sum(vals) / len(vals), 1)
+
+    def _latest_val(key: str):
+        for e in reversed(recent):
+            if key in e and e[key] is not None:
+                return e[key]
+        return None
+
+    latest = {
+        "last_updated": ts,
+        "source": "apple_health_shortcut",
+        "resting_hr": _rolling_avg("resting_hr"),
+        "hrv_rmssd_avg": _rolling_avg("hrv_sdnn"),  # Map SDNN into the scoring field
+        "daily_steps_avg": _rolling_avg("steps"),
+        "sleep_duration_avg": _rolling_avg("sleep_hours"),
+        "vo2_max": _latest_val("vo2_max"),
+        "sleep_regularity_stddev": None,  # Can't compute from single daily snapshots
+        "zone2_min_per_week": None,  # Not available from Shortcuts
+        "metadata": {
+            "hrv_method": "SDNN",
+            "source_detail": "ios_shortcut",
+            "entries_in_series": len(series),
+            "rolling_window": len(recent),
+        },
+    }
+
+    # Add optional metrics that don't map to scoring but are useful
+    if _latest_val("blood_oxygen") is not None:
+        latest["blood_oxygen"] = _latest_val("blood_oxygen")
+    if _latest_val("respiratory_rate") is not None:
+        latest["respiratory_rate"] = _latest_val("respiratory_rate")
+    if _latest_val("active_calories") is not None:
+        latest["active_calories"] = _rolling_avg("active_calories")
+
+    with open(latest_path, "w") as f:
+        json.dump(latest, f, indent=2)
+
+    # --- Also log weight if provided ---
+    weight_logged = False
+    if "weight_lbs" in clean:
+        try:
+            _log_weight(clean["weight_lbs"], user_id=user_id)
+            weight_logged = True
+        except Exception:
+            pass
+
+    result = {
+        "ingested": True,
+        "user_id": user_id,
+        "metrics_stored": sorted(clean.keys()),
+        "metrics_count": len(clean),
+        "series_length": len(series),
+        "latest_updated": True,
+        "weight_logged": weight_logged,
+        "timestamp": ts,
+    }
+    if unknown:
+        result["unknown_keys_ignored"] = unknown
+    return result
+
+
 # =====================================================================
 # Tool registry for HTTP API access
 # =====================================================================
@@ -1564,8 +1958,15 @@ TOOL_REGISTRY = {
     "calendar_search_events": _calendar_search_events,
     "get_api_stats": _get_api_stats,
     "get_skill_ladder": _get_skill_ladder,
-    # Excluded from HTTP: auth_garmin (interactive), open_dashboard (browser),
-    # import_apple_health (file path)
+    "import_apple_health": _import_apple_health,
+    "check_health_priorities": _check_health_priorities_tool,
+    "pull_oura": _pull_oura,
+    "connect_oura": _connect_oura,
+    "pull_whoop": _pull_whoop,
+    "connect_whoop": _connect_whoop,
+    "ingest_health_snapshot": _ingest_health_snapshot,
+    # Excluded from HTTP: auth_garmin (interactive), auth_oura (interactive),
+    # auth_whoop (interactive), open_dashboard (browser)
 }
 
 
@@ -1682,10 +2083,40 @@ def register_tools(mcp: FastMCP):
         return _connect_garmin(user_id)
 
     @mcp.tool()
+    def auth_oura(user_id: str | None = None) -> dict:
+        """Authenticate with Oura Ring via OAuth. Opens your browser for authorization. Requires oura.client_id and oura.client_secret in gateway.yaml."""
+        return _auth_oura(user_id)
+
+    @mcp.tool()
+    def pull_oura(history: bool = False, user_id: str | None = None) -> dict:
+        """Pull fresh data from Oura Ring. Returns latest metrics (RHR, HRV, sleep, steps) and optionally 90-day history. Requires auth_oura first if tokens are expired."""
+        return _pull_oura(history, user_id)
+
+    @mcp.tool()
+    def connect_oura(user_id: str | None = None) -> dict:
+        """Check Oura Ring connection status — whether tokens are cached, data freshness, and hints for next steps."""
+        return _connect_oura(user_id)
+
+    @mcp.tool()
+    def auth_whoop(user_id: str | None = None) -> dict:
+        """Authenticate with WHOOP via OAuth. Opens your browser for authorization. Requires whoop.client_id and whoop.client_secret in gateway.yaml."""
+        return _auth_whoop(user_id)
+
+    @mcp.tool()
+    def pull_whoop(history: bool = False, user_id: str | None = None) -> dict:
+        """Pull fresh data from WHOOP. Returns latest metrics (RHR, HRV, sleep, recovery) and optionally 90-day history. Requires auth_whoop first if tokens are expired."""
+        return _pull_whoop(history, user_id)
+
+    @mcp.tool()
+    def connect_whoop(user_id: str | None = None) -> dict:
+        """Check WHOOP connection status — whether tokens are cached, data freshness, and hints for next steps."""
+        return _connect_whoop(user_id)
+
+    @mcp.tool()
     def connect_wearable(service: str, user_id: str = "default") -> dict:
         """Get a tappable auth link for connecting a wearable device.
         The user opens this link on their phone to sign in.
-        Currently supports: garmin. Future: oura, whoop.
+        Currently supports: garmin, oura, whoop.
 
         Args:
             service: Wearable service name (garmin, oura, whoop)
@@ -1847,6 +2278,16 @@ def register_tools(mcp: FastMCP):
     def get_skill_ladder(goal_id: str) -> dict:
         """Get the ranked skill ladder for a goal. Returns levels ordered by expected impact, each with a habit, evidence rationale, and diagnostic question. Use during onboarding and program transitions to find the right starting point for a user. Valid goal_ids: sleep-better, less-stress, lose-weight, build-strength, more-energy, sharper-focus, better-mood, eat-healthier."""
         return _get_skill_ladder(goal_id)
+
+    @mcp.tool()
+    def check_health_priorities(user_id: str | None = None) -> dict:
+        """Run a health priority checkpoint. Scans all available health data (labs, BP, wearable metrics) for red-flag conditions like pre-diabetic glucose, thyroid abnormalities, high blood pressure, low testosterone, elevated LDL, and more. Returns flags with severity (urgent/notable), coaching-appropriate language, and connections to the user's current goal. Call this after new lab results arrive or during periodic reviews to catch findings that may override the user's chosen coaching focus."""
+        return _check_health_priorities_tool(user_id)
+
+    @mcp.tool()
+    def ingest_health_snapshot(user_id: str, metrics: dict, timestamp: str | None = None) -> dict:
+        """Ingest a daily health snapshot from an iOS Shortcut (Apple Health bridge). Accepts a flat dict of metric values from HealthKit. Valid keys: resting_hr, hrv_sdnn, steps, sleep_hours, sleep_start, sleep_end, weight_lbs, vo2_max, blood_oxygen, active_calories, respiratory_rate. All metrics optional individually. Appends to daily series and updates rolling averages for scoring."""
+        return _ingest_health_snapshot(user_id, metrics, timestamp)
 
 
 def register_resources(mcp: FastMCP):

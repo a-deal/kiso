@@ -1,0 +1,238 @@
+# TOOLS — Health Engine API
+
+You access health data through the health-engine HTTP API running on auth.mybaseline.health.
+All tools are GET endpoints. Use web_fetch to call them.
+
+## Authentication
+
+Every request requires: ?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY
+
+## How to Call Tools
+
+Use web_fetch with a GET URL:
+
+web_fetch("https://auth.mybaseline.health/api/checkin?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY")
+
+For user-specific calls, add user_id:
+
+web_fetch("https://auth.mybaseline.health/api/checkin?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=paul")
+
+For dict/list params, URL-encode a JSON string:
+
+web_fetch("https://auth.mybaseline.health/api/log_habits?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=paul&habits=%7B%22am_sunlight%22%3A%22y%22%2C%22creatine%22%3A%22y%22%7D")
+
+## Available Tools
+
+### Core — Use These Most
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| checkin | greeting, user_id | Full coaching briefing: scores, insights, weight, nutrition, habits, Garmin data. Call this first. |
+| score | user_id | Deep dive: coverage %, NHANES percentiles for 20 metrics, tier breakdown, gap analysis. |
+| get_status | user_id | Data inventory: what files exist, last modified, row counts. |
+| get_user_profile | user_id | Full profile: intake data, targets, active protocols. |
+| get_daily_snapshot | user_id | Live today snapshot: Garmin intraday + meals + calorie balance. Pulls fresh Garmin data (~15s). |
+
+### Logging — Persist User Data
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| log_weight | weight_lbs, date, user_id | Log a weight measurement. |
+| log_bp | systolic, diastolic, date, user_id | Log blood pressure. |
+| log_meal | description, protein_g, carbs_g, fat_g, calories, date, user_id | Log a meal. Protein required. |
+| log_habits | habits (JSON dict), date, user_id | Log daily habits. Pass {"am_sunlight":"y","creatine":"y"}. |
+| log_supplements | stack OR supplements, date, user_id | Log supplements. stack="morning" or stack="evening" for predefined stacks. |
+| log_sleep | bed_time, wake_time, date, user_id | Log bed/wake times in HH:MM format. |
+| log_medication | name, dose, route, notes, date, user_id | Log medication or injection. |
+| log_labs | results (JSON dict), date, source, user_id | Log lab results. Names auto-normalize ("Apo B" = "apob"). |
+| log_nudge | user_id, nudge_type | Record that a nudge was sent (day1, day3, day7). |
+
+### Querying
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| get_meals | date, days, user_id | Meals + Garmin burn for a date or range. Shows surplus/deficit. |
+| get_labs | user_id | Full lab history: all draws, dates, sources, latest values. |
+| get_protocols | user_id | Active protocol progress: day, week, phase, habit completion. |
+
+### Setup & Connections
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| setup_profile | age, sex, weight_target, protein_target, name, goals, user_id | Create or update user config. |
+| connect_garmin | user_id | Check Garmin connection status. |
+| pull_garmin | history, workouts, user_id | Pull fresh Garmin data. |
+| connect_oura | user_id | Check Oura Ring connection status. |
+| pull_oura | history, user_id | Pull fresh Oura Ring data. |
+| connect_whoop | user_id | Check WHOOP connection status. |
+| pull_whoop | history, user_id | Pull fresh WHOOP data. |
+| connect_wearable | service, user_id | Get a tappable auth link for wearable connection. Supports: garmin, oura, whoop. |
+| import_apple_health | file_path, user_id | Import an Apple Health export ZIP or XML file. |
+| ingest_health_snapshot | user_id, metrics (JSON) | Receive a daily health snapshot from an iOS Shortcut. See Apple Health Shortcuts section below. |
+| check_health_priorities | user_id | Scan labs and vitals for red flags. Returns flags with severity, coaching messages, and connections to the user's current goal. Call after new lab results arrive. |
+| check_engagement | user_id | Check if user engaged after onboarding. Returns nudge recommendations. |
+| onboard | user_id | Coverage map + guided setup. All 20 metrics, what is tracked vs missing. |
+
+## Examples
+
+### Morning check-in for Andrew
+web_fetch("https://auth.mybaseline.health/api/checkin?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY")
+
+### Log a meal for Paul
+web_fetch("https://auth.mybaseline.health/api/log_meal?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=paul&description=Chicken%20bowl&protein_g=45&calories=650")
+
+### Log weight for Dad
+web_fetch("https://auth.mybaseline.health/api/log_weight?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=dad&weight_lbs=185")
+
+### Get Paul's meals for today
+web_fetch("https://auth.mybaseline.health/api/get_meals?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=paul")
+
+### Log labs for a user
+web_fetch("https://auth.mybaseline.health/api/log_labs?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=paul&results=%7B%22apob%22%3A85%2C%22ldl_c%22%3A110%2C%22hdl_c%22%3A55%7D&source=Quest")
+
+### List all available tools
+web_fetch("https://auth.mybaseline.health/api/tools?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY")
+
+## Error Handling
+
+- 403: Invalid token. Check the token value.
+- 404: Unknown tool name. Check /api/tools for the list.
+- 400: Parameter error. Check param types (numbers must be numbers, not strings).
+- 500: Tool execution error. The response body has the error message.
+
+## Nutrition Lookups
+
+When someone asks about a food's macros, use web_search to find nutrition facts. Extract the answer from search snippets directly. Do NOT follow up with web_fetch on product pages (they block scrapers). The snippets almost always have what you need.
+
+## Meal Logging Protocol (MANDATORY — NO EXCEPTIONS)
+
+THIS IS THE MOST IMPORTANT SECTION IN THIS FILE.
+
+After EVERY log_meal call, you MUST immediately call get_meals for that date.
+Do NOT report totals from your conversation memory. ONLY report what get_meals returns.
+
+### The sequence, every single time:
+
+1. User mentions food → call log_meal to write it to disk
+2. IMMEDIATELY call get_meals for today → read back what is ON DISK
+3. Report to user:
+   - "Logged: [description], [protein]g, [calories] cal"
+   - "Day total from log: [X]g protein, [Y] cal" (THIS NUMBER COMES FROM get_meals)
+   - "Remaining: [Z]g protein, [W] cal to hit targets"
+4. If the numbers from get_meals do not match your memory, get_meals wins. Always.
+
+### Why this exists:
+
+Session restarts wipe your memory. If you track meals in your head and the session
+resets, you will give advice based on incomplete data. This caused a user to overeat
+by 800 calories because the agent thought meals were missing when they were already
+on disk. The agent then re-logged them and gave bad "you need to eat more" advice.
+
+NEVER skip step 2. NEVER report a running total from memory. Disk is truth.
+
+### Nutrition advice rule:
+
+Before giving ANY nutrition advice (what to eat, how much room is left, whether
+to eat more), call get_meals FIRST. No exceptions. Even if you just logged a meal
+30 seconds ago. Even if you "know" the total. Read from disk.
+
+### Google Calendar
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| calendar_list_events | time_min, time_max, max_results, query, calendar_id | List upcoming events. calendar_id defaults to primary. |
+| calendar_create_event | summary, start, end, description, location, calendar_id | Create a calendar event. Times in ISO 8601 (2026-03-22T14:00:00). |
+| calendar_search_events | query, time_min, time_max, max_results, calendar_id | Search events by text. |
+| connect_google_calendar | user_id | Generate OAuth link for connecting Google Calendar (new users). |
+
+**Calendar IDs for Andrew:**
+- `primary` — default calendar (meetings, personal)
+- `7f88e5f263e40be2efa23f5bd21482a4dac97e45611be337983b717b8f227b68@group.calendar.google.com` — Health calendar (training, health events)
+
+**Examples:**
+
+List next 5 events:
+web_fetch("https://auth.mybaseline.health/api/calendar_list_events?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&max_results=5")
+
+Create a training event on Health calendar:
+web_fetch("https://auth.mybaseline.health/api/calendar_create_event?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&summary=Training%3A%20Lower%20%2B%20Pull&start=2026-03-23T15:00:00&end=2026-03-23T16:30:00&calendar_id=7f88e5f263e40be2efa23f5bd21482a4dac97e45611be337983b717b8f227b68%40group.calendar.google.com")
+
+Search for events:
+web_fetch("https://auth.mybaseline.health/api/calendar_search_events?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&query=training&max_results=5")
+
+
+### Coaching / Programs
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| get_skill_ladder | goal_id | Ranked skill ladder for a goal. Returns levels ordered by impact, each with habit, evidence, and diagnostic question. Use during onboarding to find the right starting point. |
+
+Valid goal_ids: sleep-better, less-stress, lose-weight, build-strength, more-energy, sharper-focus, better-mood, eat-healthier.
+
+**Example:**
+web_fetch("https://auth.mybaseline.health/api/get_skill_ladder?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&goal_id=sleep-better")
+
+Returns ranked levels with diagnostic questions. Walk the ladder from Level 1: ask the diagnostic question, if they have it handled, move to the next level. First unmastered level = their 14-day program focus. See COACH.md for full onboarding flow.
+
+### Apple Health Shortcuts Bridge (for Apple Watch users)
+
+Apple Watch users can set up a daily auto-sync using iOS Shortcuts. This replaces the manual ZIP export.
+
+The Shortcut reads HealthKit data on the phone and POSTs a JSON snapshot to the gateway daily at 7am.
+
+**How to guide a user through setup:**
+
+1. Tell them: "I can set up a daily auto-sync from your Apple Watch. It uses iOS Shortcuts and takes about 5 minutes. Want to do it now?"
+2. Walk them through creating a Shortcut that reads: Resting Heart Rate, Heart Rate Variability, Step Count, Sleep Analysis (duration + start/end times), Weight, VO2 Max, Blood Oxygen, Active Energy Burned, Respiratory Rate
+3. The Shortcut builds a JSON dict and uses "Get Contents of URL" to POST to: https://auth.mybaseline.health/api/ingest_health_snapshot
+4. JSON body format: {"token": "NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY", "user_id": "USER_ID", "metrics": {"resting_hr": 55, "hrv_sdnn": 42, "steps": 8500, "sleep_hours": 7.2, "sleep_start": "22:45", "sleep_end": "06:10", "weight_lbs": 192, "vo2_max": 51, "blood_oxygen": 97, "active_calories": 450, "respiratory_rate": 14}}
+5. Set up a daily automation: Personal Automation, Time of Day, 7:00 AM, run the Shortcut, toggle "Run without asking"
+6. First run will ask for Health permissions. Tap Allow All.
+
+All metrics are optional. Whatever the phone has, it sends. Missing metrics are skipped.
+
+Data saves to apple_health_daily.json (time series, appends daily) and apple_health_latest.json (rolling 7-day averages, same schema as garmin_latest.json).
+
+**Full setup guide:** docs/apple-health-shortcut-setup.md on the server.
+
+### Health Priority Checkpoint
+
+After new lab results arrive (via log_labs), call check_health_priorities to scan for red flags.
+
+**When to call it:** After any log_labs call. Also useful during periodic reviews.
+
+**What it returns:**
+- List of flags with severity ("urgent" or "notable")
+- Coaching-appropriate messages for each flag
+- Goal connections: how each flag relates to the user's current goal
+- Suggested coaching response
+
+**10 conditions checked:** pre-diabetic/diabetic glucose, high HbA1c, thyroid (TSH), high blood pressure, low testosterone, high LDL, low vitamin D, high CRP, kidney function (eGFR), low iron (ferritin).
+
+**How to use the results:** Connect findings to the user's current goal when possible. "Your sleep work is even more important given this glucose reading." For urgent flags, always suggest talking to their doctor. Tone: "I noticed" not "WARNING."
+
+**Example:**
+web_fetch("https://auth.mybaseline.health/api/check_health_priorities?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&user_id=paul")
+
+### Admin / Diagnostics
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| get_api_stats | days, user_id | API latency stats: p50/p95/max per tool, error rates, timeout counts. |
+
+
+### Async Tools (Background Jobs)
+
+For slow tools like pull_garmin (60-120s), use the _async suffix to run in background:
+
+**Start a background pull:**
+web_fetch("https://auth.mybaseline.health/api/pull_garmin_async?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY")
+
+Returns immediately: {"job_id": "pull_garmin_1234567890", "status": "running"}
+
+**Check job status:**
+web_fetch("https://auth.mybaseline.health/api/job_status?token=NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY&job_id=pull_garmin_1234567890")
+
+Returns: {"status": "running"} or {"status": "completed", "result": {...}} or {"status": "error", "error": "..."}
+
+Any tool can be called async by adding _async suffix. Use for pull_garmin and other slow operations.
