@@ -1405,6 +1405,87 @@ def _calendar_search_events(
     return {"events": events, "count": len(events)}
 
 
+def _get_api_stats(days: int = 7, user_id: str | None = None) -> dict:
+    """Compute API latency stats and error rates from the audit log."""
+    audit_path = PROJECT_ROOT / "data" / "admin" / "api_audit.jsonl"
+    if not audit_path.exists():
+        return {"error": "No audit log found. API has not been called yet."}
+
+    from collections import defaultdict
+    cutoff = datetime.now().timestamp() - (days * 86400)
+
+    tool_stats: dict[str, list] = defaultdict(list)
+    errors: dict[str, int] = defaultdict(int)
+    timeouts: dict[str, int] = defaultdict(int)
+    total = 0
+
+    with open(audit_path) as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            ts_str = entry.get("ts", "")
+            try:
+                ts = datetime.fromisoformat(ts_str).timestamp()
+            except (ValueError, TypeError):
+                continue
+
+            if ts < cutoff:
+                continue
+
+            # Filter by user_id if specified
+            if user_id and entry.get("user_id") != user_id:
+                continue
+
+            tool = entry.get("tool", "unknown")
+            ms = entry.get("ms")
+            status = entry.get("status", "")
+            total += 1
+
+            if ms is not None:
+                tool_stats[tool].append(ms)
+
+            if status == "error":
+                errors[tool] += 1
+                error_msg = entry.get("error", "")
+                if "timeout" in error_msg.lower() or "abort" in error_msg.lower():
+                    timeouts[tool] += 1
+
+    if total == 0:
+        return {"message": f"No API calls in the last {days} days.", "days": days}
+
+    # Compute p50, p95, max per tool
+    import statistics
+    per_tool = {}
+    for tool, latencies in sorted(tool_stats.items()):
+        latencies.sort()
+        n = len(latencies)
+        p50 = latencies[n // 2] if n else 0
+        p95 = latencies[int(n * 0.95)] if n else 0
+        per_tool[tool] = {
+            "calls": n,
+            "p50_ms": p50,
+            "p95_ms": p95,
+            "max_ms": max(latencies) if latencies else 0,
+            "errors": errors.get(tool, 0),
+            "timeouts": timeouts.get(tool, 0),
+        }
+
+    # Flag slow tools (p95 > 5000ms)
+    slow = [t for t, s in per_tool.items() if s["p95_ms"] > 5000]
+
+    return {
+        "days": days,
+        "total_calls": total,
+        "total_errors": sum(errors.values()),
+        "total_timeouts": sum(timeouts.values()),
+        "per_tool": per_tool,
+        "slow_tools": slow,
+    }
+
+
 # =====================================================================
 # Tool registry for HTTP API access
 # =====================================================================
@@ -1437,6 +1518,7 @@ TOOL_REGISTRY = {
     "calendar_list_events": _calendar_list_events,
     "calendar_create_event": _calendar_create_event,
     "calendar_search_events": _calendar_search_events,
+    "get_api_stats": _get_api_stats,
     # Excluded from HTTP: auth_garmin (interactive), open_dashboard (browser),
     # import_apple_health (file path)
 }
@@ -1710,6 +1792,11 @@ def register_tools(mcp: FastMCP):
     ) -> dict:
         """Search Google Calendar events by text. Searches event titles, descriptions, locations, and attendees. Use to find specific events like 'lab retest' or 'training'. Use calendar_id to target a specific calendar."""
         return _calendar_search_events(query, time_min, time_max, max_results, calendar_id, user_id)
+
+    @mcp.tool()
+    def get_api_stats(days: int = 7, user_id: str | None = None) -> dict:
+        """API latency and error report. Shows p50/p95/max latency per tool, error counts, timeout counts, and flags slow tools (>5s p95). Use for debugging performance issues and monitoring system health."""
+        return _get_api_stats(days, user_id)
 
 
 def register_resources(mcp: FastMCP):
