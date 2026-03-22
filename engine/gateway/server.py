@@ -57,14 +57,15 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
     token_store = TokenStore()
 
     # --- Health-engine tool API + transcript viewer ---
-    from .api import api_handler, api_list_tools
+    from .api import api_handler, api_list_tools, api_async_handler, api_job_status
     from .transcripts import transcripts_api, transcripts_html
 
     # Explicit routes MUST come before the {tool_name} wildcard
     app.get("/api/tools")(api_list_tools)
     app.get("/api/transcripts")(transcripts_api)
+    app.get("/api/job_status")(api_job_status)
     app.get("/transcripts")(transcripts_html)
-    # Wildcard tool dispatch
+    # Wildcard tool dispatch — handles both sync and async (_async suffix)
     app.get("/api/{tool_name}")(api_handler)
     app.post("/api/{tool_name}")(api_handler)
 

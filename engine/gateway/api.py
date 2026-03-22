@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -18,6 +19,10 @@ from fastapi import HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from mcp_server.tools import TOOL_REGISTRY
+
+# Background job tracking for async tool calls (e.g. pull_garmin_async)
+_background_jobs: dict[str, dict] = {}
+_job_lock = threading.Lock()
 
 logger = logging.getLogger("health-engine.api")
 
@@ -122,13 +127,21 @@ def _coerce_params(tool_name: str, params: dict) -> dict:
 
 
 async def api_handler(tool_name: str, request: Request, token: str = Query(...)):
-    """Generic handler for /api/{tool_name}."""
+    """Generic handler for /api/{tool_name}.
+
+    If tool_name ends with _async, dispatches to the background job handler.
+    """
     config = request.app.state.config
 
     if not config.api_token:
         raise HTTPException(500, "API token not configured on server")
     if token != config.api_token:
         raise HTTPException(403, "Invalid token")
+
+    # Route _async suffix to background handler
+    if tool_name.endswith("_async"):
+        return await api_async_handler(tool_name, request, token)
+
     if tool_name not in TOOL_REGISTRY:
         raise HTTPException(404, f"Unknown tool: {tool_name}")
 
@@ -185,3 +198,86 @@ async def api_list_tools(request: Request, token: str = Query(...)):
         ]
         tools.append({"name": name, "params": params, "doc": (func.__doc__ or "").split("\n")[0]})
     return JSONResponse(content={"tools": tools})
+
+
+def _run_background_job(job_id: str, tool_name: str, params: dict):
+    """Run a tool in a background thread, storing result in _background_jobs."""
+    start = time.monotonic()
+    try:
+        result = TOOL_REGISTRY[tool_name](**params)
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        serialized = json.loads(json.dumps(result, default=str))
+        user_id = params.get("user_id", "default")
+        _audit_log(tool_name, user_id, params, serialized, None, elapsed_ms)
+        with _job_lock:
+            _background_jobs[job_id] = {
+                "status": "completed",
+                "result": serialized,
+                "elapsed_ms": elapsed_ms,
+            }
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        user_id = params.get("user_id", "default")
+        _audit_log(tool_name, user_id, params, None, str(e), elapsed_ms)
+        with _job_lock:
+            _background_jobs[job_id] = {
+                "status": "error",
+                "error": str(e),
+                "elapsed_ms": elapsed_ms,
+            }
+
+
+async def api_async_handler(tool_name: str, request: Request, token: str = Query(...)):
+    """Fire-and-forget handler: runs a tool in background, returns job ID immediately.
+
+    Use /api/job_status?token=...&job_id=... to poll for results.
+    Currently supported: pull_garmin_async → runs pull_garmin in background.
+    """
+    config = request.app.state.config
+    if not config.api_token:
+        raise HTTPException(500, "API token not configured on server")
+    if token != config.api_token:
+        raise HTTPException(403, "Invalid token")
+
+    # Strip _async suffix to get the real tool name
+    real_tool = tool_name.replace("_async", "")
+    if real_tool not in TOOL_REGISTRY:
+        raise HTTPException(404, f"Unknown tool: {real_tool}")
+
+    params = dict(request.query_params)
+    params.pop("token", None)
+    params = _coerce_params(real_tool, params)
+
+    job_id = f"{real_tool}_{int(time.time() * 1000)}"
+    with _job_lock:
+        _background_jobs[job_id] = {"status": "running", "tool": real_tool}
+
+    thread = threading.Thread(
+        target=_run_background_job,
+        args=(job_id, real_tool, params),
+        daemon=True,
+    )
+    thread.start()
+
+    return JSONResponse(content={
+        "job_id": job_id,
+        "status": "running",
+        "message": f"{real_tool} started in background. Poll /api/job_status?job_id={job_id} for results.",
+    })
+
+
+async def api_job_status(request: Request, token: str = Query(...), job_id: str = Query(...)):
+    """Check the status of a background job."""
+    config = request.app.state.config
+    if not config.api_token:
+        raise HTTPException(500, "API token not configured on server")
+    if token != config.api_token:
+        raise HTTPException(403, "Invalid token")
+
+    with _job_lock:
+        job = _background_jobs.get(job_id)
+
+    if not job:
+        raise HTTPException(404, f"Unknown job: {job_id}")
+
+    return JSONResponse(content={"job_id": job_id, **job})

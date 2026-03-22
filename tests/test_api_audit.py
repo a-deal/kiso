@@ -126,3 +126,61 @@ class TestAuditLogIntegration:
         # Should have timezone offset like -07:00 or +00:00
         assert "T" in ts
         assert ("+" in ts or ts.endswith("Z") or "-" in ts.split("T")[1])
+
+
+class TestAsyncApi:
+    """Tests for the _async background job API."""
+
+    def test_async_returns_job_id(self, client, audit_log_path):
+        """Calling tool_async returns immediately with a job_id."""
+        resp = client.get("/api/get_status_async?token=test-token-123")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "running"
+        assert "job_id" in data
+        assert data["job_id"].startswith("get_status_")
+
+    def test_async_job_completes(self, client, audit_log_path):
+        """Background job eventually completes and result is retrievable."""
+        import time
+        resp = client.get("/api/get_status_async?token=test-token-123")
+        job_id = resp.json()["job_id"]
+
+        # Poll for completion (get_status is fast, should finish quickly)
+        for _ in range(20):
+            status_resp = client.get(f"/api/job_status?token=test-token-123&job_id={job_id}")
+            assert status_resp.status_code == 200
+            if status_resp.json()["status"] == "completed":
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("Job did not complete within 2 seconds")
+
+        result = status_resp.json()
+        assert result["status"] == "completed"
+        assert "result" in result
+        assert "elapsed_ms" in result
+
+    def test_async_unknown_tool_404(self, client):
+        resp = client.get("/api/nonexistent_tool_async?token=test-token-123")
+        assert resp.status_code == 404
+
+    def test_job_status_unknown_id_404(self, client):
+        resp = client.get("/api/job_status?token=test-token-123&job_id=fake_123")
+        assert resp.status_code == 404
+
+    def test_async_audited(self, client, audit_log_path):
+        """Async jobs still produce audit log entries."""
+        import time
+        resp = client.get("/api/get_status_async?token=test-token-123")
+        job_id = resp.json()["job_id"]
+
+        for _ in range(20):
+            status = client.get(f"/api/job_status?token=test-token-123&job_id={job_id}")
+            if status.json()["status"] == "completed":
+                break
+            time.sleep(0.1)
+
+        entries = _read_audit(audit_log_path)
+        assert len(entries) >= 1
+        assert entries[0]["tool"] == "get_status"
