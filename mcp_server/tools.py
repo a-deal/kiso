@@ -1055,14 +1055,17 @@ def _connect_wearable(service: str, user_id: str = "default") -> dict:
             "service": "apple_health",
             "supported": True,
             "setup_method": "one_tap_install",
-            "download_url": download_url,
+            "install_url": download_url,
+            "automation_url": "shortcuts://create-automation",
             "coach_instructions": (
-                "Apple Watch is fully supported. Send the user the download_url link. "
-                "Tell them: 'Tap this link to install a shortcut that syncs your Apple Watch "
-                "data to me every morning. It takes about 10 seconds.' After they install it, "
-                "tell them: 'Now let's set it to run automatically. Open the Shortcuts app, "
-                "go to the Automation tab, tap the + button, choose Time of Day, set it to "
-                "7 AM, pick the Baseline Health Sync shortcut, and turn on Run Without Asking.' "
+                "Apple Watch is fully supported. Send TWO messages:\n"
+                "Message 1: Send the install_url link. Say something like: "
+                "'Tap this link to install a shortcut that syncs your Apple Watch "
+                "data to me every morning.'\n"
+                "Message 2: After they confirm it installed, send the automation_url link. "
+                "Say: 'Now tap this link. It opens the right screen. Then just pick: "
+                "Time of Day, set 7 AM, choose Baseline Health Sync, and turn on "
+                "Run Without Asking. Four taps and you are set.'\n"
                 "Do NOT use technical language. Do NOT mention APIs, JSON, tokens, or endpoints."
             ),
         }
