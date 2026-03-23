@@ -1047,17 +1047,23 @@ def _connect_whoop(user_id: str | None = None) -> dict:
 
 def _connect_wearable(service: str, user_id: str = "default") -> dict:
     if service in ("apple_health", "apple_watch", "apple"):
+        from engine.gateway.config import load_gateway_config
+        gw_config = load_gateway_config()
+        token = gw_config.api_token or ""
+        download_url = f"https://auth.mybaseline.health/api/shortcut?token={token}&user_id={user_id}"
         return {
             "service": "apple_health",
             "supported": True,
-            "setup_method": "shortcut",
+            "setup_method": "one_tap_install",
+            "download_url": download_url,
             "coach_instructions": (
-                "Apple Watch is fully supported. Walk the user through setting up a "
-                "Shortcut on their iPhone that syncs their health data to you automatically "
-                "every morning. Do NOT use technical language. Do NOT mention APIs, endpoints, "
-                "JSON, POST requests, or HealthKit. Just guide them like a friend helping "
-                "with their phone. See the 'Apple Health Shortcuts Bridge' section in TOOLS.md "
-                "for the steps, but translate everything into plain, friendly language."
+                "Apple Watch is fully supported. Send the user the download_url link. "
+                "Tell them: 'Tap this link to install a shortcut that syncs your Apple Watch "
+                "data to me every morning. It takes about 10 seconds.' After they install it, "
+                "tell them: 'Now let's set it to run automatically. Open the Shortcuts app, "
+                "go to the Automation tab, tap the + button, choose Time of Day, set it to "
+                "7 AM, pick the Baseline Health Sync shortcut, and turn on Run Without Asking.' "
+                "Do NOT use technical language. Do NOT mention APIs, JSON, tokens, or endpoints."
             ),
         }
 

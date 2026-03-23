@@ -389,3 +389,106 @@ async def api_upload(
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+async def api_shortcut(
+    request: Request,
+    token: str = Query(...),
+    user_id: str = Query(...),
+):
+    """Generate and serve a personalized Apple Health Shortcut file.
+
+    GET /api/shortcut?token=...&user_id=paul
+
+    Returns a signed .shortcut file that the user can tap to install.
+    The shortcut reads HealthKit data and syncs it daily.
+    """
+    config = request.app.state.config
+    if not config.api_token:
+        raise HTTPException(500, "API token not configured on server")
+    if token != config.api_token:
+        raise HTTPException(403, "Invalid token")
+
+    from engine.shortcuts.generator import generate_shortcut
+
+    start = time.monotonic()
+
+    try:
+        # Generate the unsigned shortcut
+        shortcut_bytes = generate_shortcut(
+            user_id=user_id,
+            api_token=config.api_token,
+        )
+
+        # Try to sign it (requires macOS shortcuts CLI)
+        signed_bytes = _sign_shortcut(shortcut_bytes)
+        if signed_bytes is not None:
+            result_bytes = signed_bytes
+        else:
+            # Unsigned fallback (user needs "Allow Untrusted Shortcuts" enabled)
+            logger.warning("Could not sign shortcut, serving unsigned")
+            result_bytes = shortcut_bytes
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        _audit_log("shortcut", user_id, {}, {"size": len(result_bytes)}, None, elapsed_ms)
+
+        from fastapi.responses import Response
+        return Response(
+            content=result_bytes,
+            media_type="application/x-shortcut",
+            headers={
+                "Content-Disposition": f'attachment; filename="Baseline Health Sync.shortcut"',
+            },
+        )
+
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        _audit_log("shortcut", user_id, {}, None, str(e), elapsed_ms)
+        raise HTTPException(500, f"Failed to generate shortcut: {e}")
+
+
+def _sign_shortcut(unsigned_bytes: bytes) -> bytes | None:
+    """Sign a .shortcut file using the macOS shortcuts CLI.
+
+    Returns signed bytes, or None if signing is unavailable.
+    """
+    import subprocess
+
+    # Check if shortcuts CLI exists
+    if not shutil.which("shortcuts"):
+        return None
+
+    tmp_in = None
+    tmp_out = None
+    try:
+        # Write unsigned file
+        fd, tmp_in = tempfile.mkstemp(suffix=".shortcut", prefix="he_unsigned_")
+        os.write(fd, unsigned_bytes)
+        os.close(fd)
+
+        # Sign it
+        tmp_out = tmp_in.replace("unsigned", "signed")
+        result = subprocess.run(
+            ["shortcuts", "sign", "--mode", "anyone", "--input", tmp_in, "--output", tmp_out],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            logger.warning(f"shortcuts sign failed: {result.stderr}")
+            return None
+
+        with open(tmp_out, "rb") as f:
+            return f.read()
+
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        logger.warning(f"Shortcut signing error: {e}")
+        return None
+    finally:
+        for p in (tmp_in, tmp_out):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
