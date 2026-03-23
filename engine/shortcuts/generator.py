@@ -338,7 +338,8 @@ def generate_shortcut(user_id: str, api_token: str,
 
     # Build the full shortcut structure
     shortcut = {
-        "WFWorkflowClientVersion": "1050.19",
+        "WFWorkflowName": "Baseline Health Sync",
+        "WFWorkflowClientVersion": "1177.2",
         "WFWorkflowMinimumClientVersion": 900,
         "WFWorkflowMinimumClientVersionString": "900",
         "WFWorkflowIcon": {
