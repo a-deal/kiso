@@ -87,3 +87,8 @@ else
     echo "  ./deploy-coach.sh --reset +14152009584"
     echo "  ./deploy-coach.sh --reset all"
 fi
+
+# Sign shortcuts on Mac Mini (runs natively, not in Docker)
+echo ""
+echo "Signing Apple Health shortcuts on Mac Mini..."
+ssh "$REMOTE" "$REMOTE_PATH; cd ~/src/health-engine && bash scripts/sign_shortcuts.sh" 2>&1 || echo "WARNING: Shortcut signing failed (non-fatal)"
