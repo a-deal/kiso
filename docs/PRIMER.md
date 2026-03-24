@@ -175,6 +175,3 @@ python3 -m uvicorn engine.gateway.server:app --port 18800
 curl http://localhost:18800/api/v1/persons?token=YOUR_TOKEN
 ```
 
-## Questions?
-
-Text Andrew or Milo. Milo has full read access to all of this.
