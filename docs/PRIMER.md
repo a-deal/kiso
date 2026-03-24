@@ -125,7 +125,7 @@ Status codes: 400 (bad request), 403 (auth failed), 404 (not found), 500 (server
 
 ## What's Deployed
 
-Mac Mini (M4 Pro), Docker container, port 18800, Cloudflare Tunnel for HTTPS.
+Mac Mini (M4 Pro) in SF, Docker container, port 18800, Cloudflare Tunnel for HTTPS. Users are US-based, so latency is fine for now.
 
 Andrew's person already seeded: `andrew-deal-001`, `healthEngineUserId=default`.
 
