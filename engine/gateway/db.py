@@ -5,6 +5,7 @@ The health_engine_user_id column on person bridges SQLite <-> CSV user directori
 
 DB file: data/kasane.db (inside existing Docker volume mount).
 """
+from __future__ import annotations
 
 import sqlite3
 import threading
