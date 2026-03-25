@@ -1699,6 +1699,23 @@ def _get_api_stats(days: int = 7, user_id: str | None = None) -> dict:
     }
 
 
+def _get_coaching_resource(topic: str) -> dict:
+    """Load a coaching resource file on demand.
+
+    Available topics: onboarding, program-engine, self-review
+    """
+    valid_topics = ["onboarding", "program-engine", "self-review"]
+    if topic not in valid_topics:
+        return {"error": f"Unknown topic '{topic}'. Available: {', '.join(valid_topics)}"}
+
+    path = PROJECT_ROOT / "data" / "coaching" / f"{topic}.md"
+    if not path.exists():
+        return {"error": f"Resource file not found: {path}"}
+
+    content = path.read_text()
+    return {"topic": topic, "content": content}
+
+
 def _get_skill_ladder(goal_id: str) -> dict:
     """Return the ranked skill ladder for a goal.
 
@@ -2040,6 +2057,15 @@ def _get_person_context(person_id: str | None = None, user_id: str | None = None
             health["meals_today"] = [r for r in rows if r.get("date") == today]
 
         context["health"] = health
+
+    # Load coach notes from context.md if present
+    if he_uid:
+        context_md_path = _data_dir(he_uid) / "context.md"
+        if context_md_path.exists():
+            try:
+                context["coach_notes"] = context_md_path.read_text().strip()
+            except Exception:
+                pass
 
     return context
 
@@ -2417,6 +2443,11 @@ def register_tools(mcp: FastMCP):
     def get_skill_ladder(goal_id: str) -> dict:
         """Get the ranked skill ladder for a goal. Returns levels ordered by expected impact, each with a habit, evidence rationale, and diagnostic question. Use during onboarding and program transitions to find the right starting point for a user. Valid goal_ids: sleep-better, less-stress, lose-weight, build-strength, more-energy, sharper-focus, better-mood, eat-healthier."""
         return _get_skill_ladder(goal_id)
+
+    @mcp.tool()
+    def get_coaching_resource(topic: str) -> dict:
+        """Load a coaching resource file on demand. Available topics: onboarding, program-engine, self-review. Call this when you need the full onboarding flow, program engine details, or self-review protocol instead of relying on the stubs in AGENTS.md."""
+        return _get_coaching_resource(topic)
 
     @mcp.tool()
     def check_health_priorities(user_id: str | None = None) -> dict:
