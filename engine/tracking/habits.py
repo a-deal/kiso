@@ -24,8 +24,13 @@ def streak(
     ref = datetime.strptime(as_of, "%Y-%m-%d").date() if as_of else datetime.now().date()
     date_set = {datetime.strptime(d, "%Y-%m-%d").date() for d in dates}
 
-    count = 0
+    # Start from today. If today isn't logged yet, start from yesterday.
+    # This prevents the streak from showing 0 before the user checks in today.
     check = ref
+    if check not in date_set:
+        check = ref - timedelta(days=1)
+
+    count = 0
     while check in date_set:
         count += 1
         check -= timedelta(days=1)
@@ -37,6 +42,7 @@ def gap_analysis(
     dates: list[str],
     window_days: int = 30,
     as_of: Optional[str] = None,
+    started_on: Optional[str] = None,
 ) -> dict:
     """
     Analyze gaps in a habit over a window.
@@ -50,7 +56,13 @@ def gap_analysis(
         Dict with completion_rate, longest_streak, current_streak, gaps (list of gap lengths)
     """
     ref = datetime.strptime(as_of, "%Y-%m-%d").date() if as_of else datetime.now().date()
-    start = ref - timedelta(days=window_days - 1)
+    # If a start date is provided, use actual habit age instead of fixed window
+    if started_on:
+        start = datetime.strptime(started_on, "%Y-%m-%d").date()
+        window_days = (ref - start).days + 1  # inclusive
+        window_days = max(window_days, 1)  # avoid division by zero
+    else:
+        start = ref - timedelta(days=window_days - 1)
     date_set = {datetime.strptime(d, "%Y-%m-%d").date() for d in dates}
 
     # Count completions in window

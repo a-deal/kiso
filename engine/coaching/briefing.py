@@ -234,14 +234,23 @@ def build_briefing(config: dict) -> dict:
     briefing["data_available"]["weight_log"] = weights_data is not None
     briefing["data_available"]["bp_log"] = bp_data is not None
 
+    # Extract user_id from data_dir for per-user threshold overrides
+    # data_dir is typically data/users/<user_id>
+    _user_id = None
+    _data_parts = raw_data_dir.parts
+    if "users" in _data_parts:
+        _idx = _data_parts.index("users")
+        if _idx + 1 < len(_data_parts):
+            _user_id = _data_parts[_idx + 1]
+
     rules_file = config.get("insights", {}).get("thresholds_file")
     if rules_file:
         p = Path(rules_file)
         if not p.is_absolute():
             p = Path(__file__).parent.parent.parent / rules_file
-        rules = load_rules(str(p))
+        rules = load_rules(str(p), user_id=_user_id)
     else:
-        rules = load_rules()
+        rules = load_rules(user_id=_user_id)
 
     insights = generate_insights(
         garmin=wearable,

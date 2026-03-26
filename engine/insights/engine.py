@@ -14,11 +14,33 @@ from engine.models import Insight
 _DEFAULT_RULES_PATH = Path(__file__).parent / "rules.yaml"
 
 
-def load_rules(path: Optional[str] = None) -> dict:
-    """Load threshold rules from YAML file."""
+def load_rules(path: Optional[str] = None, user_id: Optional[str] = None) -> dict:
+    """Load threshold rules from YAML file, with optional per-user overrides.
+
+    If user_id is provided, looks for data/users/<user_id>/rules.yaml
+    and merges those values on top of the defaults. This allows per-user
+    threshold calibration (e.g., different RHR thresholds for an athlete
+    vs a sedentary 42-year-old).
+    """
     p = Path(path) if path else _DEFAULT_RULES_PATH
     with open(p) as f:
-        return yaml.safe_load(f)
+        rules = yaml.safe_load(f)
+
+    if user_id:
+        # Resolve from the repo root (3 levels up from engine/insights/engine.py)
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        user_rules_path = repo_root / "data" / "users" / user_id / "rules.yaml"
+        if user_rules_path.exists():
+            with open(user_rules_path) as f:
+                overrides = yaml.safe_load(f) or {}
+            # Deep merge: override individual thresholds, not entire sections
+            for section, values in overrides.items():
+                if section in rules and isinstance(values, dict):
+                    rules[section].update(values)
+                else:
+                    rules[section] = values
+
+    return rules
 
 
 def generate_insights(
