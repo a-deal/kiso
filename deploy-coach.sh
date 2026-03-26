@@ -64,14 +64,20 @@ if [ "${2:-}" = "--reset" ]; then
 import json, sys
 d = json.load(sys.stdin)
 for s in d['sessions']:
-    if 'whatsapp:direct' in s['key']:
+    if ':direct:' in s['key']:
         print(s['key'])
 \"" | while read -r key; do
             echo "  Resetting: $key"
             ssh "$REMOTE" "$REMOTE_PATH; openclaw gateway call sessions.reset --params '{\"key\": \"$key\"}' 2>/dev/null"
         done
     else
-        SESSION_KEY="agent:main:whatsapp:direct:$PHONE"
+        # Accept full session keys (e.g. agent:main:telegram:direct:80135247)
+        # or phone numbers (defaults to whatsapp:direct)
+        if [[ "$PHONE" == agent:* ]]; then
+            SESSION_KEY="$PHONE"
+        else
+            SESSION_KEY="agent:main:whatsapp:direct:$PHONE"
+        fi
         echo "Resetting session: $SESSION_KEY"
         ssh "$REMOTE" "$REMOTE_PATH; openclaw gateway call sessions.reset --params '{\"key\": \"$SESSION_KEY\"}'"
     fi

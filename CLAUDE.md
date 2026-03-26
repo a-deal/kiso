@@ -188,3 +188,18 @@ When a user asks "why do you measure this?" or "how does scoring work?", referen
 | `docs/METRICS.md` | Contributors | 20-metric catalog |
 | `docs/ONBOARDING.md` | New users | Setup walkthrough |
 | `docs/DATA_FORMATS.md` | Contributors | CSV/JSON schemas |
+
+# Cost Control — HARD RULE
+NEVER use Opus for automated/cron/background tasks. Use Haiku for routine operations (check-ins, log parsing, cron jobs). Use Sonnet only for complex reasoning (compound pattern detection, onboarding synthesis). Opus is reserved for interactive human sessions only. Monitor API costs weekly at console.anthropic.com. If monthly API spend exceeds $50, alert Andrew immediately.
+
+# Slow Down — HARD RULE
+Source: mariozechner.at/posts/2026-03-25-thoughts-on-slowing-the-fuck-down/
+
+1. Daily code generation must match daily review capacity. If Andrew cannot review it today, do not generate it today.
+2. Every sub-agent output gets reviewed before merging. No ship it and check later.
+3. Human writes architecture and APIs. Agent implements. Agent does not design the system.
+4. When something fails, fix the pattern. Do not retry the same approach.
+5. Friction is a feature. Leave some manual steps intentional.
+6. Use sub-agents only for truly independent 30+ minute tasks. Everything else, do directly.
+7. No cargo cult architecture. No abstractions that do not serve the current problem.
+8. Before any build: what problem does this solve? How will we know it worked?

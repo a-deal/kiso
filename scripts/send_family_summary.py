@@ -36,6 +36,13 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "family_summaries.yaml"
 DB_PATH = PROJECT_ROOT / "data" / "kasane.db"
 
 # Resend API key: check env first, then fall back to Baseline key
+# Load from .env if not already set
+_env_path = Path.home() / ".config" / "health-engine" / ".env"
+if _env_path.exists():
+    for line in _env_path.read_text().strip().splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 FROM_EMAIL = "milo@mybaseline.health"
 FROM_NAME = "Milo"
