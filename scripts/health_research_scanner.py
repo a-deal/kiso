@@ -408,11 +408,100 @@ def synthesize(api_key: str, days: int = 7):
     return memo
 
 
+# --- Email delivery ---
+
+ENV_FILE = Path("/Users/andrew/.config/health-engine/.env")
+FROM_EMAIL = "Research Digest <andrew.deal@mybaseline.health>"
+TO_EMAIL = "deal.e.andrew@gmail.com"
+
+
+def _load_resend_key():
+    """Load RESEND_API_KEY from .env file."""
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                if k.strip() == "RESEND_API_KEY":
+                    return v.strip()
+    return os.environ.get("RESEND_API_KEY", "")
+
+
+def send_research_digest(papers: list[dict], date: str):
+    """Format and email the daily research digest via Resend."""
+    resend_key = _load_resend_key()
+    if not resend_key:
+        print("No RESEND_API_KEY found, skipping email")
+        return
+
+    if not papers:
+        print("No papers to email")
+        return
+
+    # Build HTML
+    rows = ""
+    for p in papers:
+        score = p.get("relevance_score", 0)
+        title = p.get("title", "")
+        journal = p.get("journal", "")
+        url = p.get("url", "")
+        summary = p.get("summary", p.get("abstract", "")[:200])
+        # Clean summary of markdown headers
+        summary = summary.lstrip("# Summary").strip()
+
+        rows += f"""
+        <tr style="border-bottom: 1px solid #eee;">
+            <td style="padding: 12px 8px; vertical-align: top; width: 40px; color: #666; font-size: 14px;">{score}</td>
+            <td style="padding: 12px 8px;">
+                <a href="{url}" style="color: #1a1a1a; text-decoration: none; font-weight: 600; font-size: 15px;">{title}</a>
+                <div style="color: #888; font-size: 12px; margin-top: 2px;">{journal}</div>
+                <div style="color: #444; font-size: 13px; margin-top: 6px; line-height: 1.4;">{summary}</div>
+            </td>
+        </tr>"""
+
+    html = f"""
+    <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #1a1a1a; font-size: 18px; margin-bottom: 4px;">Health Research Digest</h2>
+        <p style="color: #888; font-size: 13px; margin-top: 0;">{date} / {len(papers)} papers / PubMed scan</p>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 2px solid #ddd;">
+                    <th style="text-align: left; padding: 8px; font-size: 12px; color: #888;">Score</th>
+                    <th style="text-align: left; padding: 8px; font-size: 12px; color: #888;">Paper</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+        <p style="color: #aaa; font-size: 11px; margin-top: 20px;">
+            Relevance scored by keyword matching against Kiso health metrics framework.
+            Weekly synthesis runs Sunday 9am PT.
+        </p>
+    </div>"""
+
+    import requests as _req
+    resp = _req.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {resend_key}"},
+        json={
+            "from": FROM_EMAIL,
+            "to": [TO_EMAIL],
+            "subject": f"Research Digest - {date} ({len(papers)} papers)",
+            "html": html,
+        },
+        timeout=15,
+    )
+    if resp.status_code == 200:
+        print(f"Research digest emailed (id: {resp.json().get('id', '?')})")
+    else:
+        print(f"Email failed: {resp.status_code} {resp.text}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Health research scanner")
     parser.add_argument("--scan", action="store_true", help="Daily scan (Haiku)")
     parser.add_argument("--synthesize", action="store_true", help="Weekly synthesis (Sonnet)")
     parser.add_argument("--dry-run", action="store_true", help="Skip LLM calls")
+    parser.add_argument("--email", action="store_true", help="Email the digest via Resend")
     parser.add_argument("--days", type=int, default=7, help="Days to look back for synthesis")
     args = parser.parse_args()
 
@@ -422,7 +511,9 @@ def main():
         sys.exit(1)
 
     if args.scan:
-        scan(api_key, dry_run=args.dry_run)
+        result = scan(api_key, dry_run=args.dry_run)
+        if args.email and result and result.get("papers"):
+            send_research_digest(result["papers"], result.get("date", ""))
     elif args.synthesize:
         synthesize(api_key, days=args.days)
     else:
