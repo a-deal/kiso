@@ -23,6 +23,7 @@ from engine.tracking.weight import rolling_average, weekly_rate, projected_date,
 from engine.scoring.rolling import compute_rolling, compute_rolling_from_csv, compute_protein_rolling
 from engine.scoring.alerts import check_alerts
 from engine.scoring.acwr import compute_acwr, build_session_list, acwr_alert
+from engine.scoring.lab_trends import compute_lab_trends
 from engine.scoring.disclosure import (
     get_tenure_days, get_tenure_tier, resolve_outcome,
     filter_horizons, filter_alerts,
@@ -193,6 +194,16 @@ def build_briefing(config: dict) -> dict:
             "last_draw": labs.get("draws", [{}])[0].get("date") if labs.get("draws") else None,
             "markers_available": len(latest),
         }
+
+        # Lab trends: compare across draws (Phase 5)
+        lab_trend_data = compute_lab_trends(labs)
+        if lab_trend_data:
+            briefing["lab_trends"] = {
+                "significant_changes": lab_trend_data.get("significant_changes", []),
+                "retest_due": lab_trend_data.get("retest_due", []),
+                "total_markers": lab_trend_data.get("total_markers", 0),
+                "total_draws": lab_trend_data.get("total_draws", 0),
+            }
 
     # Build metric dates and counts for freshness/reliability
     metric_dates = {}
