@@ -1076,6 +1076,15 @@ def _pull_garmin(history: bool = False, workouts: bool = False, user_id: str | N
     config = _load_config(user_id)
     if user_id and user_id != "default":
         config["data_dir"] = str(_data_dir(user_id))
+        # Per-user Garmin tokens: never fall back to another user's tokens
+        user_token_dir = str(Path(os.path.expanduser("~/.config/health-engine/tokens/garmin")) / user_id)
+        config.setdefault("garmin", {})["token_dir"] = user_token_dir
+        if not GarminClient.has_tokens(user_token_dir):
+            return {
+                "pulled": False,
+                "error": f"No Garmin tokens for user '{user_id}'. They need to authenticate first.",
+                "hint": f"Send them the auth link: connect_wearable(service='garmin', user_id='{user_id}')",
+            }
     try:
         client = GarminClient.from_config(config)
         person_id = _resolve_person_id(user_id)

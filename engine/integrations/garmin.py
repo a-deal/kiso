@@ -47,13 +47,10 @@ class GarminClient:
         if token_dir:
             self.token_dir = Path(os.path.expanduser(token_dir))
         else:
-            # Check gateway token path first, fall back to legacy CLI path
-            gateway_path = Path(os.path.expanduser("~/.config/health-engine/tokens/garmin/default"))
+            # No default fallback. Each user must have their own tokens.
+            # Legacy path only used when no user_id context (CLI usage).
             legacy_path = Path(os.path.expanduser("~/.config/health-engine/garmin-tokens"))
-            if gateway_path.exists() and any(gateway_path.iterdir()):
-                self.token_dir = gateway_path
-            else:
-                self.token_dir = legacy_path
+            self.token_dir = legacy_path
         self.exercise_map = exercise_map or DEFAULT_EXERCISE_MAP
         self.data_dir = Path(data_dir or "./data")
         self._client = None
@@ -79,14 +76,11 @@ class GarminClient:
 
     @classmethod
     def has_tokens(cls, token_dir: str | None = None) -> bool:
-        """Check if cached garth token files exist."""
+        """Check if cached garth token files exist at the specified path."""
         if token_dir:
             td = Path(token_dir)
             return td.exists() and any(td.iterdir())
-        # Check gateway path first, then legacy
-        gateway = Path(os.path.expanduser("~/.config/health-engine/tokens/garmin/default"))
-        if gateway.exists() and any(gateway.iterdir()):
-            return True
+        # Legacy CLI path only (no default fallback to another user)
         legacy = Path(os.path.expanduser("~/.config/health-engine/garmin-tokens"))
         return legacy.exists() and any(legacy.iterdir())
 
