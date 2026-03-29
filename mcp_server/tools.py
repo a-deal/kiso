@@ -42,6 +42,30 @@ def _config_path(user_id: str | None = None) -> Path:
     return home
 
 
+def _resolve_person_id(user_id: str | None = None) -> str | None:
+    """Resolve a health_engine_user_id to a SQLite person.id.
+
+    Returns the person_id or None if no matching record exists.
+    Used by tools that dual-write to CSV + SQLite during migration.
+    """
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        if user_id:
+            row = db.execute(
+                "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+                (user_id,),
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT id FROM person WHERE health_engine_user_id = 'andrew' AND deleted_at IS NULL"
+            ).fetchone()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
 def _load_config(user_id: str | None = None) -> dict:
     path = _config_path(user_id)
     if not path.exists():
@@ -347,24 +371,62 @@ def _get_protocols(user_id: str | None = None) -> list[dict]:
 
 
 def _log_weight(weight_lbs: float, date: str | None = None, user_id: str | None = None) -> dict:
+    import uuid as _uuid
     date = date or datetime.now().strftime("%Y-%m-%d")
+
+    # CSV write (legacy, kept during migration)
     data_dir = _data_dir(user_id)
     path = data_dir / "weight_log.csv"
     rows = read_csv(path)
     fieldnames = ["date", "weight_lbs", "source", "waist_in"]
     rows.append({"date": date, "weight_lbs": str(weight_lbs), "source": "mcp", "waist_in": ""})
     write_csv(path, rows, fieldnames=fieldnames)
+
+    # SQLite write (new)
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.now().isoformat()
+        rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:weight_entry:{date}"))
+        db.execute(
+            "INSERT OR REPLACE INTO weight_entry (id, person_id, date, weight_lbs, source, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (rid, person_id, date, weight_lbs, "mcp", now, now),
+        )
+        db.commit()
+
     return {"logged": True, "date": date, "weight_lbs": weight_lbs}
 
 
 def _log_bp(systolic: int, diastolic: int, date: str | None = None, user_id: str | None = None) -> dict:
+    import uuid as _uuid
     date = date or datetime.now().strftime("%Y-%m-%d")
+
+    # CSV write (legacy)
     data_dir = _data_dir(user_id)
     path = data_dir / "bp_log.csv"
     rows = read_csv(path)
     fieldnames = ["date", "systolic", "diastolic", "source"]
     rows.append({"date": date, "systolic": str(systolic), "diastolic": str(diastolic), "source": "mcp"})
     write_csv(path, rows, fieldnames=fieldnames)
+
+    # SQLite write (new)
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.now().isoformat()
+        rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:bp_entry:{date}"))
+        db.execute(
+            "INSERT OR REPLACE INTO bp_entry (id, person_id, date, systolic, diastolic, source, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, person_id, date, systolic, diastolic, "mcp", now, now),
+        )
+        db.commit()
+
     return {"logged": True, "date": date, "systolic": systolic, "diastolic": diastolic}
 
 
@@ -474,6 +536,23 @@ def _log_session(
         "notes": "",
     }
     append_csv(path, new_row, fieldnames=fieldnames)
+
+    # SQLite write (new)
+    import uuid as _uuid
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.now().isoformat()
+        rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:training_session:{date}:{name}"))
+        db.execute(
+            "INSERT OR REPLACE INTO training_session (id, person_id, date, rpe, duration_min, type, name, notes, source, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, person_id, date, rpe, duration_min, session_type, name, None, "mcp", now, now),
+        )
+        db.commit()
+
     return {"logged": True, "date": date, "rpe": rpe, "duration_min": duration_min, "type": session_type}
 
 
@@ -510,6 +589,25 @@ def _log_meal(
         "notes": "",
     }
     append_csv(path, new_row, fieldnames=fieldnames)
+
+    # SQLite write (new)
+    import uuid as _uuid
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.now().isoformat()
+        rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:meal_entry:{date}:{meal_num}:{description[:50]}"))
+        db.execute(
+            "INSERT OR IGNORE INTO meal_entry (id, person_id, date, meal_num, time_of_day, description, "
+            "protein_g, carbs_g, fat_g, calories, notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, person_id, date, meal_num, time_of_day, description,
+             protein_g, carbs_g, fat_g, calories, None, now, now),
+        )
+        db.commit()
+
     return {"logged": True, "date": date, "meal_num": meal_num, "description": description, "protein_g": protein_g}
 
 
@@ -831,11 +929,13 @@ def _pull_garmin(history: bool = False, workouts: bool = False, user_id: str | N
         config["data_dir"] = str(_data_dir(user_id))
     try:
         client = GarminClient.from_config(config)
+        person_id = _resolve_person_id(user_id)
         result = client.pull_all(
             history=history,
             history_days=90,
             workouts=workouts,
             workout_days=7,
+            person_id=person_id,
         )
         from engine.coaching.briefing import build_briefing
         briefing = build_briefing(config)
@@ -1761,9 +1861,13 @@ def _get_coaching_resource(topic: str) -> dict:
     if topic not in valid_topics:
         return {"error": f"Unknown topic '{topic}'. Available: {', '.join(valid_topics)}"}
 
+    # Look in repo data/ first, then fall back to package-bundled data
     path = PROJECT_ROOT / "data" / "coaching" / f"{topic}.md"
     if not path.exists():
-        return {"error": f"Resource file not found: {path}"}
+        # Fallback: packaged data inside mcp_server/
+        path = Path(__file__).parent / "data" / "coaching" / f"{topic}.md"
+    if not path.exists():
+        return {"error": f"Resource file not found for topic: {topic}"}
 
     content = path.read_text()
     return {"topic": topic, "content": content}

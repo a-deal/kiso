@@ -713,11 +713,12 @@ class GarminClient:
 
         return entry
 
-    def _append_to_daily_series(self, snapshot: dict) -> list:
-        """Append a day snapshot to garmin_daily.json, deduplicating by date.
+    def _append_to_daily_series(self, snapshot: dict, person_id: str | None = None) -> list:
+        """Append a day snapshot to garmin_daily.json AND wearable_daily SQLite table.
 
-        Returns the full series list.
+        Dual-write during CSV→SQLite migration. Returns the full JSON series list.
         """
+        # JSON write (legacy)
         series_path = self.data_dir / "garmin_daily.json"
         series = []
         if series_path.exists():
@@ -727,18 +728,68 @@ class GarminClient:
             except (json.JSONDecodeError, IOError):
                 series = []
 
-        # Remove existing entry for this date, then append new one
         snap_date = snapshot["date"]
         series = [e for e in series if e.get("date") != snap_date]
         series.append(snapshot)
         series.sort(key=lambda e: e.get("date", ""))
 
-        # Keep at most 180 days
         if len(series) > 180:
             series = series[-180:]
 
         with open(series_path, "w") as f:
             json.dump(series, f, indent=2)
+
+        # SQLite write (new)
+        if person_id:
+            try:
+                import uuid as _uuid
+                from engine.gateway.db import get_db, init_db
+                init_db()
+                db = get_db()
+                now = datetime.now().isoformat(timespec="seconds")
+                rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:wearable_daily:{snap_date}"))
+
+                def _sf(v):
+                    """Safe float for SQLite."""
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return float(v)
+                    except (ValueError, TypeError):
+                        return None
+
+                def _si(v):
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return int(float(v))
+                    except (ValueError, TypeError):
+                        return None
+
+                db.execute(
+                    "INSERT OR REPLACE INTO wearable_daily (id, person_id, date, source, "
+                    "rhr, hrv, hrv_weekly_avg, hrv_status, steps, sleep_hrs, deep_sleep_hrs, "
+                    "light_sleep_hrs, rem_sleep_hrs, awake_hrs, sleep_start, sleep_end, "
+                    "calories_total, calories_active, calories_bmr, stress_avg, floors, "
+                    "distance_m, max_hr, min_hr, vo2_max, body_battery, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (rid, person_id, snap_date, "garmin",
+                     _sf(snapshot.get("rhr")), _sf(snapshot.get("hrv")),
+                     _sf(snapshot.get("hrv_weekly_avg")), snapshot.get("hrv_status"),
+                     _si(snapshot.get("steps")), _sf(snapshot.get("sleep_hrs")),
+                     _sf(snapshot.get("deep_sleep_hrs")), _sf(snapshot.get("light_sleep_hrs")),
+                     _sf(snapshot.get("rem_sleep_hrs")), _sf(snapshot.get("awake_hrs")),
+                     snapshot.get("sleep_start"), snapshot.get("sleep_end"),
+                     _sf(snapshot.get("calories_total")), _sf(snapshot.get("calories_active")),
+                     _sf(snapshot.get("calories_bmr")), _si(snapshot.get("stress_avg")),
+                     _sf(snapshot.get("floors")), _sf(snapshot.get("distance_m")),
+                     _si(snapshot.get("max_hr")), _si(snapshot.get("min_hr")),
+                     _sf(snapshot.get("vo2_max")), _si(snapshot.get("body_battery")),
+                     now, now),
+                )
+                db.commit()
+            except Exception as e:
+                print(f"  SQLite wearable_daily write error: {e}", file=sys.stderr)
 
         return series
 
@@ -780,10 +831,11 @@ class GarminClient:
             "zone2_min_per_week": None,
         }
 
-    def pull_all(self, history=False, history_days=90, workouts=False, workout_days=7) -> dict:
+    def pull_all(self, history=False, history_days=90, workouts=False, workout_days=7, person_id: str | None = None) -> dict:
         """Pull Garmin metrics. 3 API calls for today + local aggregation.
 
         With history=True, backfills daily series (for initial setup or recovery).
+        person_id: if provided, dual-writes wearable data to SQLite.
         """
         print("\nPulling Garmin data...")
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -799,12 +851,12 @@ class GarminClient:
         if not snapshot.get("sleep_hrs") and not snapshot.get("steps"):
             yesterday_str = (date.today() - timedelta(days=1)).isoformat()
             yesterday = self._pull_day_snapshot(yesterday_str)
-            self._append_to_daily_series(yesterday)
+            self._append_to_daily_series(yesterday, person_id=person_id)
             y_filled = sum(1 for k, v in yesterday.items() if k != "date" and v is not None)
             print(f"  Yesterday ({yesterday_str}): {y_filled} metrics (today was sparse)")
 
         # Append today to daily series
-        series = self._append_to_daily_series(snapshot)
+        series = self._append_to_daily_series(snapshot, person_id=person_id)
 
         # VO2 max (doesn't change daily, grab from get_stats or latest in series)
         vo2 = None
@@ -897,7 +949,7 @@ class GarminClient:
                 if d in existing_dates:
                     continue
                 day_data = self._pull_day_snapshot(d)
-                series = self._append_to_daily_series(day_data)
+                series = self._append_to_daily_series(day_data, person_id=person_id)
                 time.sleep(0.3)
             print(f"  Backfill complete: {len(series)} days in series.")
 
