@@ -66,6 +66,40 @@ def _resolve_person_id(user_id: str | None = None) -> str | None:
         return None
 
 
+def _latest_weight_sqlite(person_id: str | None) -> float | None:
+    """Get the most recent weight from SQLite."""
+    if not person_id:
+        return None
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        row = db.execute(
+            "SELECT weight_lbs FROM weight_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (person_id,),
+        ).fetchone()
+        return row["weight_lbs"] if row else None
+    except Exception:
+        return None
+
+
+def _latest_bp_sqlite(person_id: str | None) -> tuple[float, float] | None:
+    """Get the most recent BP from SQLite. Returns (systolic, diastolic) or None."""
+    if not person_id:
+        return None
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        row = db.execute(
+            "SELECT systolic, diastolic FROM bp_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (person_id,),
+        ).fetchone()
+        return (row["systolic"], row["diastolic"]) if row else None
+    except Exception:
+        return None
+
+
 def _load_config(user_id: str | None = None) -> dict:
     path = _config_path(user_id)
     if not path.exists():
@@ -273,14 +307,23 @@ def _score(user_id: str | None = None) -> dict:
             if val is not None:
                 setattr(profile, attr, val)
 
-    bp_rows = read_csv(data_dir / "bp_log.csv")
-    if bp_rows and bp_rows[-1].get("systolic", "").strip():
-        profile.systolic = float(bp_rows[-1]["systolic"])
-        profile.diastolic = float(bp_rows[-1]["diastolic"])
+    _pid = _resolve_person_id(user_id)
+    bp = _latest_bp_sqlite(_pid)
+    if bp:
+        profile.systolic, profile.diastolic = bp
+    else:
+        bp_rows = read_csv(data_dir / "bp_log.csv")
+        if bp_rows and bp_rows[-1].get("systolic", "").strip():
+            profile.systolic = float(bp_rows[-1]["systolic"])
+            profile.diastolic = float(bp_rows[-1]["diastolic"])
 
-    weight_rows = read_csv(data_dir / "weight_log.csv")
-    if weight_rows and weight_rows[-1].get("weight_lbs", "").strip():
-        profile.weight_lbs = float(weight_rows[-1]["weight_lbs"])
+    wt = _latest_weight_sqlite(_pid)
+    if wt is not None:
+        profile.weight_lbs = wt
+    else:
+        weight_rows = read_csv(data_dir / "weight_log.csv")
+        if weight_rows and weight_rows[-1].get("weight_lbs", "").strip():
+            profile.weight_lbs = float(weight_rows[-1]["weight_lbs"])
 
     # Load lab results for scoring + clinical zones
     metric_dates = {}
@@ -798,14 +841,23 @@ def _onboard(user_id: str | None = None) -> dict:
             if val is not None:
                 setattr(profile, attr, val)
 
-    bp_rows = read_csv(data_dir / "bp_log.csv")
-    if bp_rows and bp_rows[-1].get("systolic", "").strip():
-        profile.systolic = float(bp_rows[-1]["systolic"])
-        profile.diastolic = float(bp_rows[-1]["diastolic"])
+    _pid = _resolve_person_id(user_id)
+    bp = _latest_bp_sqlite(_pid)
+    if bp:
+        profile.systolic, profile.diastolic = bp
+    else:
+        bp_rows = read_csv(data_dir / "bp_log.csv")
+        if bp_rows and bp_rows[-1].get("systolic", "").strip():
+            profile.systolic = float(bp_rows[-1]["systolic"])
+            profile.diastolic = float(bp_rows[-1]["diastolic"])
 
-    weight_rows = read_csv(data_dir / "weight_log.csv")
-    if weight_rows and weight_rows[-1].get("weight_lbs", "").strip():
-        profile.weight_lbs = float(weight_rows[-1]["weight_lbs"])
+    wt = _latest_weight_sqlite(_pid)
+    if wt is not None:
+        profile.weight_lbs = wt
+    else:
+        weight_rows = read_csv(data_dir / "weight_log.csv")
+        if weight_rows and weight_rows[-1].get("weight_lbs", "").strip():
+            profile.weight_lbs = float(weight_rows[-1]["weight_lbs"])
 
     lab_path = data_dir / "lab_results.json"
     if lab_path.exists():
@@ -1983,13 +2035,18 @@ def _check_health_priorities_tool(user_id: str | None = None) -> dict:
     # Load latest BP
     bp_systolic = None
     bp_diastolic = None
-    bp_rows = read_csv(data_dir / "bp_log.csv")
-    if bp_rows:
-        try:
-            bp_systolic = float(bp_rows[-1]["systolic"])
-            bp_diastolic = float(bp_rows[-1]["diastolic"])
-        except (KeyError, ValueError):
-            pass
+    _pid = _resolve_person_id(user_id)
+    bp = _latest_bp_sqlite(_pid)
+    if bp:
+        bp_systolic, bp_diastolic = bp
+    else:
+        bp_rows = read_csv(data_dir / "bp_log.csv")
+        if bp_rows:
+            try:
+                bp_systolic = float(bp_rows[-1]["systolic"])
+                bp_diastolic = float(bp_rows[-1]["diastolic"])
+            except (KeyError, ValueError):
+                pass
 
     # Determine sex
     sex = profile_cfg.get("sex")

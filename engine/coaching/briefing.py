@@ -91,7 +91,7 @@ def build_briefing(config: dict) -> dict:
     oura = _load_json(data_dir / "oura_latest.json")
     whoop = _load_json(data_dir / "whoop_latest.json")
     apple_health = _load_json(data_dir / "apple_health_latest.json")
-    garmin_daily = _load_json(data_dir / "garmin_daily.json")
+    garmin_daily = _load_wearable_daily_sqlite(_person_id) or _load_json(data_dir / "garmin_daily.json")
     oura_daily = _load_json(data_dir / "oura_daily.json")
     whoop_daily = _load_json(data_dir / "whoop_daily.json")
     briefing["data_available"]["garmin"] = garmin is not None
@@ -345,8 +345,8 @@ def build_briefing(config: dict) -> dict:
         briefing["weight"] = weight_section
 
     # --- Nutrition (today) ---
-    meals_today = _load_meals_for_date(data_dir, today)
-    briefing["data_available"]["meal_log"] = (data_dir / "meal_log.csv").exists()
+    meals_today = _load_meals_for_date(data_dir, today, person_id=_person_id)
+    briefing["data_available"]["meal_log"] = (data_dir / "meal_log.csv").exists() or bool(_load_meals_sqlite(_person_id))
 
     if meals_today:
         totals = daily_totals(meals_today)
@@ -567,8 +567,8 @@ def build_briefing(config: dict) -> dict:
             if result:
                 horizons[label] = result
 
-    # Protein horizons (from meal_log.csv, all dates)
-    all_meals = read_csv(data_dir / "meal_log.csv") if (data_dir / "meal_log.csv").exists() else None
+    # Protein horizons (from SQLite or meal_log.csv)
+    all_meals = _load_meals_sqlite(_person_id) or (read_csv(data_dir / "meal_log.csv") if (data_dir / "meal_log.csv").exists() else None)
     if all_meals:
         protein_horizons = compute_protein_rolling(all_meals, windows=(7, 30))
         if protein_horizons:
@@ -666,6 +666,50 @@ def _load_lab_results(data_dir: Path) -> Optional[dict]:
         return json.load(f)
 
 
+def _load_wearable_daily_sqlite(person_id: str | None) -> Optional[list]:
+    """Load wearable daily series from SQLite. Returns list of dicts matching garmin_daily.json format."""
+    if not person_id:
+        return None
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        rows = db.execute(
+            "SELECT * FROM wearable_daily WHERE person_id = ? ORDER BY date",
+            (person_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        return [dict(r) for r in rows]
+    except Exception:
+        return None
+
+
+def _load_meals_sqlite(person_id: str | None, date: str | None = None) -> Optional[list]:
+    """Load meals from SQLite. Returns list of dicts matching meal_log.csv format."""
+    if not person_id:
+        return None
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        if date:
+            rows = db.execute(
+                "SELECT * FROM meal_entry WHERE person_id = ? AND date = ? ORDER BY meal_num",
+                (person_id, date),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM meal_entry WHERE person_id = ? ORDER BY date, meal_num",
+                (person_id,),
+            ).fetchall()
+        if not rows:
+            return None
+        return [dict(r) for r in rows]
+    except Exception:
+        return None
+
+
 def _load_weight_log(data_dir: Path, person_id: str | None = None) -> Optional[list]:
     # Try SQLite first
     if person_id:
@@ -722,7 +766,13 @@ def _load_bp_log(data_dir: Path, person_id: str | None = None) -> Optional[list]
     return readings if readings else None
 
 
-def _load_meals_for_date(data_dir: Path, date: str) -> Optional[list]:
+def _load_meals_for_date(data_dir: Path, date: str, person_id: str | None = None) -> Optional[list]:
+    # Try SQLite first
+    meals = _load_meals_sqlite(person_id, date=date)
+    if meals:
+        return meals
+
+    # Fallback to CSV
     path = data_dir / "meal_log.csv"
     if not path.exists():
         return None
