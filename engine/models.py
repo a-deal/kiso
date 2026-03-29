@@ -158,3 +158,131 @@ class Insight:
     title: str
     body: str
     category: str = ""  # e.g., "hrv", "sleep", "rhr", "weight", "bp"
+
+
+# --- Health tracking models (SQLite-backed) ---
+
+@dataclass
+class WeightEntry:
+    """A single weight measurement."""
+    id: str
+    person_id: str
+    date: str
+    weight_lbs: float
+    waist_in: Optional[float] = None
+    source: Optional[str] = None
+
+@dataclass
+class MealEntry:
+    """A single meal log entry."""
+    id: str
+    person_id: str
+    date: str
+    meal_num: Optional[int] = None
+    time_of_day: Optional[str] = None
+    description: Optional[str] = None
+    protein_g: Optional[float] = None
+    carbs_g: Optional[float] = None
+    fat_g: Optional[float] = None
+    calories: Optional[float] = None
+    notes: Optional[str] = None
+
+@dataclass
+class BpEntry:
+    """A single blood pressure reading."""
+    id: str
+    person_id: str
+    date: str
+    systolic: float
+    diastolic: float
+    source: Optional[str] = None
+
+@dataclass
+class TrainingSession:
+    """A training session (cardio, strength, etc.)."""
+    id: str
+    person_id: str
+    date: str
+    rpe: Optional[float] = None
+    duration_min: Optional[float] = None
+    type: Optional[str] = None
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    source: Optional[str] = None
+
+@dataclass
+class StrengthSet:
+    """A single set within a training session."""
+    id: str
+    person_id: str
+    date: str
+    exercise: str
+    session_id: Optional[str] = None
+    weight_lbs: Optional[float] = None
+    reps: Optional[int] = None
+    rpe: Optional[float] = None
+    notes: Optional[str] = None
+
+@dataclass
+class WearableDaily:
+    """One day of wearable data (Garmin, Oura, WHOOP, Apple Watch)."""
+    id: str
+    person_id: str
+    date: str
+    source: Optional[str] = None
+    rhr: Optional[float] = None
+    hrv: Optional[float] = None
+    hrv_weekly_avg: Optional[float] = None
+    hrv_status: Optional[str] = None
+    steps: Optional[int] = None
+    sleep_hrs: Optional[float] = None
+    deep_sleep_hrs: Optional[float] = None
+    light_sleep_hrs: Optional[float] = None
+    rem_sleep_hrs: Optional[float] = None
+    awake_hrs: Optional[float] = None
+    sleep_start: Optional[str] = None
+    sleep_end: Optional[str] = None
+    calories_total: Optional[float] = None
+    calories_active: Optional[float] = None
+    calories_bmr: Optional[float] = None
+    stress_avg: Optional[int] = None
+    floors: Optional[float] = None
+    distance_m: Optional[float] = None
+    max_hr: Optional[int] = None
+    min_hr: Optional[int] = None
+    vo2_max: Optional[float] = None
+    body_battery: Optional[int] = None
+
+@dataclass
+class LabDraw:
+    """A lab visit / blood draw event."""
+    id: str
+    person_id: str
+    date: str
+    source: Optional[str] = None
+    notes: Optional[str] = None
+    results: list = field(default_factory=list)  # list[LabResult]
+
+@dataclass
+class LabResult:
+    """A single biomarker from a lab draw."""
+    id: str
+    draw_id: str
+    person_id: str
+    marker: str
+    value: Optional[float] = None
+    value_text: Optional[str] = None
+    unit: Optional[str] = None
+    reference_low: Optional[float] = None
+    reference_high: Optional[float] = None
+    flag: Optional[str] = None
+
+@dataclass
+class HabitLog:
+    """A single habit completion record (normalized from wide CSV format)."""
+    id: str
+    person_id: str
+    date: str
+    habit_name: str
+    completed: bool = False
+    notes: Optional[str] = None

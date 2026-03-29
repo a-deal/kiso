@@ -1,9 +1,9 @@
-"""SQLite database for Kasane entities (persons, habits, check-ins, focus plans).
+"""SQLite database for Kasane entities + health tracking data.
 
-Health tracking data (weight, meals, labs, Garmin) stays in CSVs.
-The health_engine_user_id column on person bridges SQLite <-> CSV user directories.
+All data lives in kasane.db: person profiles, habits, check-ins, focus plans,
+AND health tracking (weight, meals, BP, labs, wearables, training).
 
-DB file: data/kasane.db (inside existing Docker volume mount).
+DB file: data/kasane.db
 """
 from __future__ import annotations
 
@@ -172,6 +172,142 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
     PRIMARY KEY (device_id, person_id)
 );
 
+-- Health tracking tables (migrated from CSVs)
+
+CREATE TABLE IF NOT EXISTS weight_entry (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    weight_lbs REAL NOT NULL,
+    waist_in REAL,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS meal_entry (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    meal_num INTEGER,
+    time_of_day TEXT,
+    description TEXT,
+    protein_g REAL,
+    carbs_g REAL,
+    fat_g REAL,
+    calories REAL,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bp_entry (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    systolic REAL NOT NULL,
+    diastolic REAL NOT NULL,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS training_session (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    rpe REAL,
+    duration_min REAL,
+    type TEXT,
+    name TEXT,
+    notes TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS strength_set (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES training_session(id),
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    exercise TEXT NOT NULL,
+    weight_lbs REAL,
+    reps INTEGER,
+    rpe REAL,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wearable_daily (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    source TEXT,
+    rhr REAL,
+    hrv REAL,
+    hrv_weekly_avg REAL,
+    hrv_status TEXT,
+    steps INTEGER,
+    sleep_hrs REAL,
+    deep_sleep_hrs REAL,
+    light_sleep_hrs REAL,
+    rem_sleep_hrs REAL,
+    awake_hrs REAL,
+    sleep_start TEXT,
+    sleep_end TEXT,
+    calories_total REAL,
+    calories_active REAL,
+    calories_bmr REAL,
+    stress_avg INTEGER,
+    floors REAL,
+    distance_m REAL,
+    max_hr INTEGER,
+    min_hr INTEGER,
+    vo2_max REAL,
+    body_battery INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lab_draw (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    source TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lab_result (
+    id TEXT PRIMARY KEY,
+    draw_id TEXT NOT NULL REFERENCES lab_draw(id),
+    person_id TEXT NOT NULL REFERENCES person(id),
+    marker TEXT NOT NULL,
+    value REAL,
+    value_text TEXT,
+    unit TEXT,
+    reference_low REAL,
+    reference_high REAL,
+    flag TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS habit_log (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    habit_name TEXT NOT NULL,
+    completed INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Indexes: existing
 CREATE INDEX IF NOT EXISTS idx_habit_person ON habit(person_id);
 CREATE INDEX IF NOT EXISTS idx_checkin_habit ON check_in(habit_id);
 CREATE INDEX IF NOT EXISTS idx_checkin_date ON check_in(date);
@@ -179,6 +315,17 @@ CREATE INDEX IF NOT EXISTS idx_message_person ON check_in_message(person_id);
 CREATE INDEX IF NOT EXISTS idx_focus_plan_person ON focus_plan(person_id);
 CREATE INDEX IF NOT EXISTS idx_health_measurement_person ON health_measurement(person_id);
 CREATE INDEX IF NOT EXISTS idx_workout_record_person ON workout_record(person_id);
+
+-- Indexes: health tracking
+CREATE UNIQUE INDEX IF NOT EXISTS idx_weight_person_date ON weight_entry(person_id, date);
+CREATE INDEX IF NOT EXISTS idx_meal_person_date ON meal_entry(person_id, date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bp_person_date ON bp_entry(person_id, date);
+CREATE INDEX IF NOT EXISTS idx_session_person_date ON training_session(person_id, date);
+CREATE INDEX IF NOT EXISTS idx_strength_person_date ON strength_set(person_id, date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wearable_person_date ON wearable_daily(person_id, date);
+CREATE INDEX IF NOT EXISTS idx_lab_draw_person ON lab_draw(person_id);
+CREATE INDEX IF NOT EXISTS idx_lab_result_person_marker ON lab_result(person_id, marker);
+CREATE INDEX IF NOT EXISTS idx_habit_log_person_date ON habit_log(person_id, date);
 """
 
 
@@ -198,6 +345,15 @@ ENTITY_TABLES = {
     "focus_plan": "focus_plan",
     "health_measurement": "health_measurement",
     "workout_record": "workout_record",
+    "weight_entry": "weight_entry",
+    "meal_entry": "meal_entry",
+    "bp_entry": "bp_entry",
+    "training_session": "training_session",
+    "strength_set": "strength_set",
+    "wearable_daily": "wearable_daily",
+    "lab_draw": "lab_draw",
+    "lab_result": "lab_result",
+    "habit_log": "habit_log",
 }
 
 # Columns per table (excluding id, created_at, updated_at, deleted_at which are handled generically)
@@ -231,5 +387,38 @@ TABLE_COLUMNS = {
     ],
     "workout_record": [
         "person_id", "workout_type", "duration", "calories", "date", "source",
+    ],
+    "weight_entry": [
+        "person_id", "date", "weight_lbs", "waist_in", "source",
+    ],
+    "meal_entry": [
+        "person_id", "date", "meal_num", "time_of_day", "description",
+        "protein_g", "carbs_g", "fat_g", "calories", "notes",
+    ],
+    "bp_entry": [
+        "person_id", "date", "systolic", "diastolic", "source",
+    ],
+    "training_session": [
+        "person_id", "date", "rpe", "duration_min", "type", "name", "notes", "source",
+    ],
+    "strength_set": [
+        "session_id", "person_id", "date", "exercise", "weight_lbs", "reps", "rpe", "notes",
+    ],
+    "wearable_daily": [
+        "person_id", "date", "source", "rhr", "hrv", "hrv_weekly_avg", "hrv_status",
+        "steps", "sleep_hrs", "deep_sleep_hrs", "light_sleep_hrs", "rem_sleep_hrs",
+        "awake_hrs", "sleep_start", "sleep_end", "calories_total", "calories_active",
+        "calories_bmr", "stress_avg", "floors", "distance_m", "max_hr", "min_hr",
+        "vo2_max", "body_battery",
+    ],
+    "lab_draw": [
+        "person_id", "date", "source", "notes",
+    ],
+    "lab_result": [
+        "draw_id", "person_id", "marker", "value", "value_text", "unit",
+        "reference_low", "reference_high", "flag",
+    ],
+    "habit_log": [
+        "person_id", "date", "habit_name", "completed", "notes",
     ],
 }
