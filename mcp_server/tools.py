@@ -1630,6 +1630,7 @@ def _setup_profile(
     conditions: list[str] | None = None,
     alcohol_use: str | None = None,
     tobacco_use: str | None = None,
+    equipment: list[str] | None = None,
     user_id: str | None = None,
 ) -> dict:
     cp = _config_path(user_id)
@@ -1681,6 +1682,10 @@ def _setup_profile(
         "alcohol_use": alcohol_use,
         "tobacco_use": tobacco_use,
     }
+
+    # Equipment registry
+    if equipment is not None:
+        config["profile"]["equipment"] = equipment
     has_intake = any(v is not None for v in intake_fields.values())
     if has_intake:
         config.setdefault("intake", {})
@@ -2994,6 +2999,7 @@ def register_tools(mcp: FastMCP):
         conditions: list[str] | None = None,
         alcohol_use: str | None = None,
         tobacco_use: str | None = None,
+        equipment: list[str] | None = None,
         user_id: str | None = None,
     ) -> dict:
         """Save user profile info: age, sex, goals, weight target, conditions. Call this when the user shares personal health details. Sex = 'M' or 'F'. You can call this incrementally as info is shared. user_id is optional, omit for the local user."""
@@ -3001,7 +3007,7 @@ def register_tools(mcp: FastMCP):
             age, sex, weight_target, protein_target, family_history, medications,
             waist_inches, phq9_score, name, goals, obstacles, existing_habits,
             exercise_freq, sleep_hours, sleep_quality, stress_level, conditions,
-            alcohol_use, tobacco_use, user_id,
+            alcohol_use, tobacco_use, equipment, user_id,
         )
 
     @mcp.tool()

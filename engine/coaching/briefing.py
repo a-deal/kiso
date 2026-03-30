@@ -654,9 +654,17 @@ def build_briefing(config: dict) -> dict:
     if alerts:
         briefing["alerts"] = filter_alerts(alerts, outcome, tenure_tier)
 
-    # --- Measurement prompts (equipment the user has) ---
+    # --- Measurement prompts based on equipment + schedules ---
     measurement_prompts = []
     today_dt = datetime.strptime(today, '%Y-%m-%d')
+    config_profile = config.get('profile', {})
+    equipment = config_profile.get('equipment', [])
+
+    # Equipment detection: infer from data if not explicitly set
+    has_bp_monitor = 'bp_monitor' in equipment or (data_dir / 'bp_log.csv').exists()
+    has_scale = 'scale' in equipment or (data_dir / 'weight_log.csv').exists()
+    has_tape = 'tape_measure' in equipment or config_profile.get('waist_inches') is not None
+    has_wearable = any(w in equipment for w in ['garmin', 'oura', 'whoop', 'apple_watch']) or briefing.get('wearable_source')
 
     # Blood pressure: 7-day series monthly (AHA standard)
     bp_rows_raw = read_csv(data_dir / 'bp_log.csv')
@@ -668,24 +676,55 @@ def build_briefing(config: dict) -> dict:
                 if days_since_bp >= 28:
                     measurement_prompts.append({
                         'metric': 'blood_pressure',
-                        'action': 'Start your monthly 7-day BP series. Take a morning reading before coffee, seated 5 min. Log daily for 7 days.',
+                        'action': 'Start your monthly 7-day BP series. Take a morning reading before coffee, seated 5 min. Log daily for 7 days. The average of 7 readings is your real number.',
                         'last_measured': last_bp_date,
                         'days_since': days_since_bp,
                         'schedule': 'monthly (7-day series)',
                     })
             except ValueError:
                 pass
+    elif has_bp_monitor:
+        measurement_prompts.append({
+            'metric': 'blood_pressure',
+            'action': 'You have a BP monitor but no readings logged. Start a 7-day morning series: seated 5 min, before coffee. A single reading is noise. 7-day average is signal.',
+            'last_measured': None,
+            'schedule': 'monthly (7-day series)',
+        })
     else:
         measurement_prompts.append({
             'metric': 'blood_pressure',
-            'action': 'No BP readings on file. Start a 7-day morning series: seated 5 min, before coffee.',
-            'last_measured': None,
-            'days_since': None,
+            'action': 'No BP monitor detected. An Omron cuff (~$40) is the single highest-leverage piece of equipment you can buy. BP is weighted 8/86 in your coverage score.',
+            'equipment_needed': 'bp_monitor',
+            'cost': '$40 one-time',
             'schedule': 'monthly (7-day series)',
         })
 
-    # Waist circumference: monthly during active cut
-    config_profile = config.get('profile', {})
+    # Weight: daily weigh-in
+    weight_rows = read_csv(data_dir / 'weight_log.csv')
+    if weight_rows:
+        last_weight_date = weight_rows[-1].get('date', '')
+        if last_weight_date:
+            try:
+                days_since_weight = (today_dt - datetime.strptime(last_weight_date, '%Y-%m-%d')).days
+                if days_since_weight >= 3:
+                    measurement_prompts.append({
+                        'metric': 'weight',
+                        'action': f'No weigh-in for {days_since_weight} days. Daily weighing gives the 7-day rolling average that shows real trends. Step on the scale tomorrow morning, before eating.',
+                        'last_measured': last_weight_date,
+                        'days_since': days_since_weight,
+                        'schedule': 'daily',
+                    })
+            except ValueError:
+                pass
+    elif has_scale:
+        measurement_prompts.append({
+            'metric': 'weight',
+            'action': 'You have a scale but no weight logged. Weigh in tomorrow morning, before eating. Daily readings build the rolling average that shows real trends.',
+            'last_measured': None,
+            'schedule': 'daily',
+        })
+
+    # Waist circumference: monthly
     waist = config_profile.get('waist_inches')
     waist_date = config_profile.get('waist_date')
     if waist and waist_date:
@@ -702,14 +741,38 @@ def build_briefing(config: dict) -> dict:
                 })
         except ValueError:
             pass
-    elif not waist:
+    elif has_tape:
         measurement_prompts.append({
             'metric': 'waist_circumference',
-            'action': 'No waist measurement on file. Measure at navel, standing, exhale normally. Takes 30 seconds.',
+            'action': 'You have a tape measure but no waist logged. Measure at navel, standing, exhale normally. 30 seconds. Tracks body comp changes the scale misses.',
             'last_measured': None,
-            'days_since': None,
             'schedule': 'monthly',
         })
+    else:
+        measurement_prompts.append({
+            'metric': 'waist_circumference',
+            'action': 'No waist measurement. A $3 tape measure tracks body comp changes the scale misses. Measure at navel, standing, exhale normally.',
+            'equipment_needed': 'tape_measure',
+            'cost': '$3',
+            'schedule': 'monthly',
+        })
+
+    # Wearable: prompt if none detected
+    if not has_wearable:
+        measurement_prompts.append({
+            'metric': 'wearable',
+            'action': 'No wearable connected. A Garmin, Oura, Apple Watch, or WHOOP unlocks 5 metrics automatically (sleep, HR, HRV, steps, VO2 max). Combined coverage weight: 22/86.',
+            'equipment_needed': 'wearable',
+            'schedule': 'continuous (daily wear)',
+        })
+
+    # Equipment summary for the user
+    detected_equipment = []
+    if has_bp_monitor: detected_equipment.append('bp_monitor')
+    if has_scale: detected_equipment.append('scale')
+    if has_tape: detected_equipment.append('tape_measure')
+    if has_wearable: detected_equipment.append(briefing.get('wearable_source', 'wearable'))
+    briefing['equipment_detected'] = detected_equipment
 
     if measurement_prompts:
         briefing['measurement_prompts'] = measurement_prompts
