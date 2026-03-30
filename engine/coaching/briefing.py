@@ -37,6 +37,7 @@ from engine.tracking.nutrition import remaining_to_hit, daily_totals, protein_ch
 from engine.tracking.strength import est_1rm, progression_summary
 from engine.tracking.habits import streak, gap_analysis
 from engine.utils.csv_io import read_csv
+from engine.db_read import get_weights, get_bp, get_meals, get_habits, get_sleep, get_strength, get_labs, get_wearable_daily
 
 
 def build_briefing(config: dict) -> dict:
@@ -385,7 +386,7 @@ def build_briefing(config: dict) -> dict:
                     briefing["nutrition"]["protein_warning"] = warn
 
     # --- Strength ---
-    strength_data = _load_strength_log(data_dir, config)
+    strength_data = _load_strength_log(data_dir, config, user_id=_user_id)
     briefing["data_available"]["strength_log"] = strength_data is not None
 
     if strength_data:
@@ -404,7 +405,7 @@ def build_briefing(config: dict) -> dict:
             briefing["strength"] = strength_section
 
     # --- Habits ---
-    habit_data = _load_habits(data_dir)
+    habit_data = _load_habits(data_dir, user_id=_user_id)
     briefing["data_available"]["daily_habits"] = habit_data is not None
 
     if habit_data:
@@ -576,7 +577,7 @@ def build_briefing(config: dict) -> dict:
                 horizons[label] = result
 
     # Protein horizons (from SQLite or meal_log.csv)
-    all_meals = _load_meals_sqlite(_person_id) or (read_csv(data_dir / "meal_log.csv") if (data_dir / "meal_log.csv").exists() else None)
+    all_meals = get_meals(_user_id, data_dir=data_dir) or None
     if all_meals:
         protein_horizons = compute_protein_rolling(all_meals, windows=(7, 30))
         if protein_horizons:
@@ -660,8 +661,7 @@ def build_briefing(config: dict) -> dict:
     today_status = {}
 
     # Sleep: did we log last night's sleep?
-    sleep_path = data_dir / "sleep_log.csv"
-    sleep_rows = read_csv(sleep_path) if sleep_path.exists() else []
+    sleep_rows = get_sleep(_user_id, data_dir=data_dir)
     if sleep_rows:
         last_sleep = sleep_rows[-1]
         last_sleep_date = last_sleep.get("date", "")
@@ -923,94 +923,57 @@ def _load_meals_sqlite(person_id: str | None, date: str | None = None) -> Option
         return None
 
 
-def _load_weight_log(data_dir: Path, person_id: str | None = None) -> Optional[list]:
-    # Try SQLite first
-    if person_id:
-        try:
-            from engine.gateway.db import get_db, init_db
-            init_db()
-            db = get_db()
-            rows = db.execute(
-                "SELECT date, weight_lbs FROM weight_entry WHERE person_id = ? ORDER BY date",
-                (person_id,),
-            ).fetchall()
-            if rows:
-                return [{"weight": r["weight_lbs"], "date": r["date"]} for r in rows]
-        except Exception:
-            pass
 
-    # Fallback to CSV
-    path = data_dir / "weight_log.csv"
-    if not path.exists():
+def _user_id_from_person(person_id):
+    if not person_id:
         return None
-    rows = read_csv(path)
-    weights = [
-        {"weight": float(r["weight_lbs"]), "date": r["date"]}
-        for r in rows if r.get("weight_lbs") and r["weight_lbs"].strip()
-    ]
-    return weights if weights else None
+    _map = {
+        "andrew-deal-001": "andrew",
+        "grigoriy-001": "grigoriy",
+    }
+    return _map.get(person_id, person_id)
+
+
+def _load_weight_log(data_dir: Path, person_id: str | None = None) -> Optional[list]:
+    """Load weights from SQLite (via db_read), CSV fallback built in."""
+    # Map person_id to user_id for db_read
+    user_id = _user_id_from_person(person_id)
+    rows = get_weights(user_id, data_dir)
+    if rows:
+        return [{"weight": float(r["weight_lbs"]), "date": r["date"]} for r in rows]
+    return None
 
 
 def _load_bp_log(data_dir: Path, person_id: str | None = None) -> Optional[list]:
-    # Try SQLite first
-    if person_id:
-        try:
-            from engine.gateway.db import get_db, init_db
-            init_db()
-            db = get_db()
-            rows = db.execute(
-                "SELECT date, systolic, diastolic FROM bp_entry WHERE person_id = ? ORDER BY date",
-                (person_id,),
-            ).fetchall()
-            if rows:
-                return [{"sys": r["systolic"], "dia": r["diastolic"]} for r in rows]
-        except Exception:
-            pass
-
-    # Fallback to CSV
-    path = data_dir / "bp_log.csv"
-    if not path.exists():
-        return None
-    rows = read_csv(path)
-    readings = [
-        {"sys": float(r["systolic"]), "dia": float(r["diastolic"])}
-        for r in rows if r.get("systolic") and r["systolic"].strip()
-    ]
-    return readings if readings else None
+    """Load BP from SQLite (via db_read), CSV fallback built in."""
+    user_id = _user_id_from_person(person_id)
+    rows = get_bp(user_id, data_dir)
+    if rows:
+        return [{"sys": float(r["systolic"]), "dia": float(r["diastolic"]), "date": r.get("date", "")} for r in rows]
+    return None
 
 
 def _load_meals_for_date(data_dir: Path, date: str, person_id: str | None = None) -> Optional[list]:
-    # Try SQLite first
-    meals = _load_meals_sqlite(person_id, date=date)
-    if meals:
-        return meals
-
-    # Fallback to CSV
-    path = data_dir / "meal_log.csv"
-    if not path.exists():
-        return None
-    rows = read_csv(path)
-    meals = [r for r in rows if r.get("date") == date]
+    """Load meals for a date from SQLite (via db_read), CSV fallback built in."""
+    user_id = _user_id_from_person(person_id)
+    meals = get_meals(user_id, date=date, data_dir=data_dir)
     return meals if meals else None
 
 
-def _load_strength_log(data_dir: Path, config: dict) -> Optional[list]:
-    path = data_dir / "strength_log.csv"
-    if not path.exists():
-        return None
-    rows = read_csv(path)
-    exercise_map = config.get("exercise_name_map", {})
-    for r in rows:
-        raw_name = (r.get("exercise") or "").lower().strip()
-        r["exercise"] = exercise_map.get(raw_name, raw_name)
+def _load_strength_log(data_dir: Path, config: dict, user_id: str | None = None) -> Optional[list]:
+    """Load strength from SQLite (via db_read), CSV fallback built in."""
+    rows = get_strength(user_id, data_dir=data_dir)
+    if rows:
+        exercise_map = config.get("exercise_name_map", {})
+        for r in rows:
+            raw_name = (r.get("exercise") or "").lower().strip()
+            r["exercise"] = exercise_map.get(raw_name, raw_name)
     return rows if rows else None
 
 
-def _load_habits(data_dir: Path) -> Optional[list]:
-    path = data_dir / "daily_habits.csv"
-    if not path.exists():
-        return None
-    rows = read_csv(path)
+def _load_habits(data_dir: Path, user_id: str | None = None) -> Optional[list]:
+    """Load habits from SQLite (via db_read), CSV fallback built in."""
+    rows = get_habits(user_id, data_dir=data_dir)
     return rows if rows else None
 
 
