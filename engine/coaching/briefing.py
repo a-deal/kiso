@@ -327,12 +327,20 @@ def build_briefing(config: dict) -> dict:
         current = weights_data[-1]["weight"]
         target_w = targets.get("weight_lbs")
 
+        last_date = weights_data[-1].get("date", "")
+        weighed_today = last_date == today
+
         weight_section = {
             "current": current,
+            "last_date": last_date,
+            "weighed_in_today": weighed_today,
             "rolling_avg_7d": rolled[-1]["rolling_avg"] if rolled else None,
             "weekly_rate": rate,
             "entries": len(weights_data),
         }
+
+        if not weighed_today:
+            weight_section["note"] = f"Last weigh-in was {current} lbs on {last_date}. No entry for today yet."
 
         if rate and current:
             weight_section["rate_assessment"] = rate_assessment(rate, current)
