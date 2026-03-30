@@ -336,7 +336,8 @@ def _checkin(greeting: str = "morning check-in", user_id: str | None = None) -> 
         # Flag staleness
         garmin_data = briefing.get("garmin", {})
         if garmin_data.get("last_updated"):
-            briefing["garmin_stale_warning"] = f"WARNING: Garmin data is stale (last updated {garmin_data["last_updated"]}). Pull failed: {garmin_pull_error}. Sleep, HR, HRV, steps may not reflect last night."
+            last_up = garmin_data['last_updated']
+            briefing["garmin_stale_warning"] = f"WARNING: Garmin data is stale (last updated {last_up}). Pull failed: {garmin_pull_error}. Sleep, HR, HRV, steps may not reflect last night."
 
     return briefing
 
@@ -772,6 +773,7 @@ def _get_meals(
     # Load meals from SQLite first, CSV fallback
     _pid = _resolve_person_id(user_id)
     rows = None
+    _meal_source = "csv_fallback"
     if _pid:
         from engine.gateway.db import get_db, init_db
         init_db()
@@ -782,11 +784,13 @@ def _get_meals(
         ).fetchall()
         if _mrows:
             rows = [dict(r) for r in _mrows]
+            _meal_source = "sqlite"
     if rows is None:
         rows = get_meals(user_id, data_dir=data_dir)
 
     # Load burns from SQLite wearable_daily, JSON fallback
     burn_by_date = {}
+    _burn_source = "json_fallback"
     if _pid:
         _brows = _mdb.execute(
             "SELECT date, calories_total, calories_active, calories_bmr FROM wearable_daily "
@@ -794,6 +798,8 @@ def _get_meals(
         ).fetchall()
         for b in _brows:
             burn_by_date[b["date"]] = {"total": b["calories_total"], "active": b["calories_active"], "bmr": b["calories_bmr"]}
+        if burn_by_date:
+            _burn_source = "sqlite"
     if not burn_by_date:
         burn_path = data_dir / "garmin_daily_burn.json"
         if burn_path.exists():
@@ -864,6 +870,7 @@ def _get_meals(
 
         result[d] = day_result
 
+    result["_source"] = {"meals": _meal_source, "burns": _burn_source}
     return result
 
 
