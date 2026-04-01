@@ -7,12 +7,19 @@ Two modes:
 On first access, creates the database and all tables if they don't exist.
 """
 
+import contextvars
 import json
 import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Set by MCP auth middleware when a per-user token is validated.
+# Tools read this when user_id is not explicitly passed.
+authenticated_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    'authenticated_user_id', default=None
+)
 
 
 def _now() -> str:
@@ -198,22 +205,37 @@ def _db() -> sqlite3.Connection:
 
 
 def _person_id_for_user(user_id: str | None) -> str:
-    """Map health-engine user_id to person_id.
+    """Map health-engine user_id to person_id via the person table.
 
-    Repo mode: maps known users to kasane person IDs.
-    Package mode: returns default local-user.
+    Looks up health_engine_user_id in kasane.db. No hardcoded defaults.
+    Falls back to authenticated_user_id contextvar if user_id not provided.
+    Package mode (no repo DB): returns _DEFAULT_PERSON for local-only usage.
     """
-    if not user_id or user_id == "default":
-        # Repo mode with kasane.db
-        if _DB_PATH == _REPO_DB:
-            return "andrew-deal-001"
-        # Package mode
-        return _DEFAULT_PERSON
-    mapping = {
-        "andrew": "andrew-deal-001",
-        "grigoriy": "grigoriy-001",
-    }
-    return mapping.get(user_id, user_id)
+    uid = user_id
+    if not uid or uid == "default":
+        # Check contextvar set by MCP auth middleware
+        uid = authenticated_user_id.get()
+    if not uid or uid == "default":
+        # Package mode only (standalone install, no kasane.db)
+        if _DB_PATH != _REPO_DB:
+            return _DEFAULT_PERSON
+        raise ValueError(
+            "No user_id provided. Every request must identify a user."
+        )
+    # Look up health_engine_user_id -> person.id in the DB
+    try:
+        db = _db()
+        row = db.execute(
+            "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (uid,),
+        ).fetchone()
+        db.close()
+        if row:
+            return row["id"]
+    except Exception:
+        pass
+    # If the uid is already a valid person_id (UUID), use it directly
+    return uid
 
 
 def get_db_path() -> Path:

@@ -19,7 +19,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import yaml
 from engine.utils.csv_io import read_csv, write_csv, append_csv
-from engine.db_read import get_weights, get_bp, get_meals, get_habits, get_labs, get_strength, get_wearable_daily
+from engine.db_read import get_weights, get_bp, get_meals, get_habits, get_labs, get_strength, get_wearable_daily, authenticated_user_id
+
+
+def _effective_user_id(user_id: str | None) -> str | None:
+    """Resolve user_id: explicit param > contextvar > None.
+
+    Every tool should call this to pick up the authenticated user
+    when the client doesn't pass user_id explicitly.
+    """
+    if user_id and user_id != "default":
+        return user_id
+    ctx = authenticated_user_id.get()
+    return ctx if ctx else user_id
 
 # User home directory for pip-installed (uvx) usage
 _USER_HOME = Path(os.path.expanduser("~/.config/health-engine"))
@@ -3268,42 +3280,42 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     def checkin(greeting: str = "morning check-in", user_id: str | None = None) -> dict:
         """Full health coaching briefing — scores, insights, weight, nutrition, habits, protocols, Garmin data. Call this first when the user asks about their health. Pass a short greeting like 'morning check-in' or 'how am I doing'."""
-        return _checkin(greeting, user_id)
+        return _checkin(greeting, _effective_user_id(user_id))
 
     @mcp.tool()
     def score(user_id: str | None = None) -> dict:
         """Get the user's health coverage score. Returns coverage %, NHANES percentiles for 20 metrics, tier breakdown, and ranked gap analysis showing what to measure next. Just call it, no parameters needed. user_id is optional, omit for the local user."""
-        return _score(user_id)
+        return _score(_effective_user_id(user_id))
 
     @mcp.tool()
     def get_protocols(user_id: str | None = None) -> list[dict]:
         """Active protocol progress — day, week, phase, last night's habits, nudges, outcomes. Covers sleep stack, nicotine taper, and any other active protocols."""
-        return _get_protocols(user_id)
+        return _get_protocols(_effective_user_id(user_id))
 
     @mcp.tool()
     def log_weight(weight_lbs: float, date: str | None = None, user_id: str | None = None) -> dict:
         """Log a weight measurement. Date defaults to today."""
-        return _log_weight(weight_lbs, date, user_id)
+        return _log_weight(weight_lbs, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_bp(systolic: int, diastolic: int, date: str | None = None, user_id: str | None = None) -> dict:
         """Log a blood pressure reading. Date defaults to today."""
-        return _log_bp(systolic, diastolic, date, user_id)
+        return _log_bp(systolic, diastolic, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_habits(habits: dict, date: str | None = None, user_id: str | None = None) -> dict:
         """Log daily habits. Pass a dict of habit_name: 'y' or 'n'. Date defaults to today. Habit names must match CSV columns (e.g. am_sunlight, creatine, evening_routine)."""
-        return _log_habits(habits, date, user_id)
+        return _log_habits(habits, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_supplements(stack: str | None = None, supplements: list[str] | None = None, date: str | None = None, user_id: str | None = None) -> dict:
         """Log supplement intake. Use stack='morning' or stack='evening' to log a full predefined stack, or pass supplements as a list of individual names (e.g. ['vitamin_d', 'fish_oil']). Date defaults to today."""
-        return _log_supplements(stack, supplements, date, user_id)
+        return _log_supplements(stack, supplements, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_sleep(bed_time: str, wake_time: str, date: str | None = None, user_id: str | None = None) -> dict:
         """Log bed and wake times. Times should be in HH:MM format (e.g. '22:15', '06:10'). Date defaults to today. For bed_time, use the date you went TO bed (not the next morning)."""
-        return _log_sleep(bed_time, wake_time, date, user_id)
+        return _log_sleep(bed_time, wake_time, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_meal(
@@ -3316,7 +3328,7 @@ def register_tools(mcp: FastMCP):
         user_id: str | None = None,
     ) -> dict:
         """Log a meal. Estimate protein from the description if the user doesn't give exact numbers. Carbs, fat, calories are optional. Date defaults to today."""
-        return _log_meal(description, protein_g, carbs_g, fat_g, calories, date, user_id)
+        return _log_meal(description, protein_g, carbs_g, fat_g, calories, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def get_meals(
@@ -3329,7 +3341,7 @@ def register_tools(mcp: FastMCP):
         Compares intake vs burn to show actual surplus/deficit.
         Use this when the user asks about past meals, yesterday's nutrition, weekly intake,
         or calorie balance. Date defaults to today. Set days > 1 for a range."""
-        return _get_meals(date, days, user_id)
+        return _get_meals(date, days, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_medication(
@@ -3341,13 +3353,13 @@ def register_tools(mcp: FastMCP):
         user_id: str | None = None,
     ) -> dict:
         """Log a medication or injection (e.g. tirzepatide 2.5mg subcutaneous). Tracks dose changes over time. Route examples: oral, subcutaneous, intramuscular, topical. Date defaults to today."""
-        return _log_medication(name, dose, route, notes, date, user_id)
+        return _log_medication(name, dose, route, notes, date, _effective_user_id(user_id))
 
 
     @mcp.tool()
     def log_session(rpe: float, duration_min: float | None = None, session_type: str = "training", name: str = "", date: str | None = None, user_id: str | None = None) -> dict:
         """Log a training session RPE (1-10 scale). Call after any workout. Merges with Garmin data for ACWR computation. If Garmin captured the workout, you only need the RPE. Duration is optional (Garmin provides it)."""
-        return _log_session(rpe, duration_min, session_type, name, date, user_id)
+        return _log_session(rpe, duration_min, session_type, name, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_workout(
@@ -3373,72 +3385,72 @@ def register_tools(mcp: FastMCP):
         sleep_quality: 'good', 'poor', 'terrible'
 
         Returns logged exercises, adherence vs program, and any coaching flags."""
-        return _log_workout(exercises, program_day, rpe, duration_min, sentiment, energy_level, sleep_quality, notes, date, user_id)
+        return _log_workout(exercises, program_day, rpe, duration_min, sentiment, energy_level, sleep_quality, notes, date, _effective_user_id(user_id))
 
     @mcp.tool()
     def get_workout_history(days: int = 14, user_id: str | None = None) -> dict:
         """Get recent workout sessions with exercises, program adherence, and notes. Call at session start to know what happened last time. Returns sessions with performed exercises cross-referenced against the prescribed program."""
-        return _get_workout_history(days, user_id)
+        return _get_workout_history(days, _effective_user_id(user_id))
 
     @mcp.tool()
     def get_workout_program(user_id: str | None = None) -> dict:
         """Get the user's active workout program with all days and prescribed exercises. Shows what they should be doing on each training day."""
-        return _get_workout_program(user_id)
+        return _get_workout_program(_effective_user_id(user_id))
 
     @mcp.tool()
     def get_status(user_id: str | None = None) -> dict:
         """Data files inventory — what exists, last modified, row counts. Useful for understanding what data the user has."""
-        return _get_status(user_id)
+        return _get_status(_effective_user_id(user_id))
 
     @mcp.tool()
     def onboard(user_id: str | None = None) -> dict:
         """IMPORTANT: Call this FIRST when a new user interacts with you, or when someone says 'what should I measure?', 'set me up', or 'what can you do?'. Returns all 20 health metrics, what's tracked vs missing, and ranked next steps by leverage. After calling this, call get_coaching_resource('onboarding') to load the full coaching conversation flow."""
-        return _onboard(user_id)
+        return _onboard(_effective_user_id(user_id))
 
     @mcp.tool()
     def auth_garmin(user_id: str | None = None) -> dict:
         """Authenticate with Garmin Connect via a secure browser form. Opens your browser — you type credentials there, never in chat. Credentials are used once to obtain tokens and are NOT stored."""
-        return _auth_garmin(user_id)
+        return _auth_garmin(_effective_user_id(user_id))
 
     @mcp.tool()
     def pull_garmin(history: bool = False, workouts: bool = False, user_id: str | None = None) -> dict:
         """Pull fresh data from Garmin Connect. Returns latest metrics and optionally 90-day history + workout details. Requires auth_garmin first if tokens are expired."""
-        return _pull_garmin(history, workouts, user_id)
+        return _pull_garmin(history, workouts, _effective_user_id(user_id))
 
     @mcp.tool()
     def connect_garmin(user_id: str | None = None) -> dict:
         """Check Garmin connection status — whether tokens are cached, data freshness, and hints for next steps."""
-        return _connect_garmin(user_id)
+        return _connect_garmin(_effective_user_id(user_id))
 
     @mcp.tool()
     def auth_oura(user_id: str | None = None) -> dict:
         """Authenticate with Oura Ring via OAuth. Opens your browser for authorization. Requires oura.client_id and oura.client_secret in gateway.yaml."""
-        return _auth_oura(user_id)
+        return _auth_oura(_effective_user_id(user_id))
 
     @mcp.tool()
     def pull_oura(history: bool = False, user_id: str | None = None) -> dict:
         """Pull fresh data from Oura Ring. Returns latest metrics (RHR, HRV, sleep, steps) and optionally 90-day history. Requires auth_oura first if tokens are expired."""
-        return _pull_oura(history, user_id)
+        return _pull_oura(history, _effective_user_id(user_id))
 
     @mcp.tool()
     def connect_oura(user_id: str | None = None) -> dict:
         """Check Oura Ring connection status — whether tokens are cached, data freshness, and hints for next steps."""
-        return _connect_oura(user_id)
+        return _connect_oura(_effective_user_id(user_id))
 
     @mcp.tool()
     def auth_whoop(user_id: str | None = None) -> dict:
         """Authenticate with WHOOP via OAuth. Opens your browser for authorization. Requires whoop.client_id and whoop.client_secret in gateway.yaml."""
-        return _auth_whoop(user_id)
+        return _auth_whoop(_effective_user_id(user_id))
 
     @mcp.tool()
     def pull_whoop(history: bool = False, user_id: str | None = None) -> dict:
         """Pull fresh data from WHOOP. Returns latest metrics (RHR, HRV, sleep, recovery) and optionally 90-day history. Requires auth_whoop first if tokens are expired."""
-        return _pull_whoop(history, user_id)
+        return _pull_whoop(history, _effective_user_id(user_id))
 
     @mcp.tool()
     def connect_whoop(user_id: str | None = None) -> dict:
         """Check WHOOP connection status — whether tokens are cached, data freshness, and hints for next steps."""
-        return _connect_whoop(user_id)
+        return _connect_whoop(_effective_user_id(user_id))
 
     @mcp.tool()
     def connect_wearable(service: str, user_id: str | None = None) -> dict:
@@ -3450,7 +3462,7 @@ def register_tools(mcp: FastMCP):
             service: Wearable service name (garmin, oura, whoop, apple_health, apple_watch, apple)
             user_id: User identifier for multi-user support
         """
-        return _connect_wearable(service, user_id)
+        return _connect_wearable(service, _effective_user_id(user_id))
 
     @mcp.tool()
     def connect_google_calendar(user_id: str | None = None) -> dict:
@@ -3461,7 +3473,7 @@ def register_tools(mcp: FastMCP):
         Args:
             user_id: User identifier for multi-user support
         """
-        return _connect_google_calendar(user_id)
+        return _connect_google_calendar(_effective_user_id(user_id))
 
     @mcp.tool()
     def get_daily_snapshot(user_id: str | None = None) -> dict:
@@ -3469,12 +3481,12 @@ def register_tools(mcp: FastMCP):
         stress, heart rate) alongside today's meals and calorie balance.
         Pulls fresh data from Garmin on each call (~15s). Use when the user asks
         'how's my day going', 'what's my burn so far', or 'how much can I still eat'."""
-        return _get_daily_snapshot(user_id)
+        return _get_daily_snapshot(_effective_user_id(user_id))
 
     @mcp.tool()
     def open_dashboard(user_id: str | None = None) -> dict:
         """Open the health dashboard in a browser. Refreshes briefing data first."""
-        return _open_dashboard(user_id)
+        return _open_dashboard(_effective_user_id(user_id))
 
     @mcp.tool()
     def import_apple_health(file_path: str, lookback_days: int = 90, user_id: str | None = None) -> dict:
@@ -3495,7 +3507,7 @@ def register_tools(mcp: FastMCP):
             file_path: Path to the export.zip (or export.xml) on your machine
             lookback_days: How many days of history to include (default 90)
         """
-        return _import_apple_health(file_path, lookback_days, user_id)
+        return _import_apple_health(file_path, lookback_days, _effective_user_id(user_id))
 
     @mcp.tool()
     def setup_profile(
@@ -3526,7 +3538,7 @@ def register_tools(mcp: FastMCP):
             age, sex, weight_target, protein_target, family_history, medications,
             waist_inches, phq9_score, name, goals, obstacles, existing_habits,
             exercise_freq, sleep_hours, sleep_quality, stress_level, conditions,
-            alcohol_use, tobacco_use, equipment, user_id,
+            alcohol_use, tobacco_use, equipment, _effective_user_id(user_id),
         )
 
     @mcp.tool()
@@ -3534,17 +3546,17 @@ def register_tools(mcp: FastMCP):
         """Check if a user has engaged after onboarding. Returns engagement status,
         days since onboarding, nudge history, and recommended next action.
         Used by the follow-up nudge system to decide what to send."""
-        return _check_engagement(user_id)
+        return _check_engagement(_effective_user_id(user_id))
 
     @mcp.tool()
     def log_nudge(user_id: str, nudge_type: str) -> dict:
         """Record that a nudge was sent to a user. nudge_type should be 'day1', 'day3', or 'day7'."""
-        return _log_nudge(user_id, nudge_type)
+        return _log_nudge(_effective_user_id(user_id), nudge_type)
 
     @mcp.tool()
     def get_user_profile(user_id: str | None = None) -> dict:
         """Read the user's saved profile: age, sex, goals, targets, conditions. Call this to check what you already know about someone before asking them questions you might already have answers to. user_id is optional, omit for the local user."""
-        return _get_user_profile(user_id)
+        return _get_user_profile(_effective_user_id(user_id))
 
     @mcp.tool()
     def log_labs(
@@ -3554,12 +3566,12 @@ def register_tools(mcp: FastMCP):
         user_id: str | None = None,
     ) -> dict:
         """Log lab results (biomarker key-value pairs) from any provider. Names are normalized automatically — 'Apo B', 'apolipoprotein b', and 'apob' all work. Date defaults to today. Source is optional (e.g. 'Quest', 'Function Health', 'LabCorp')."""
-        return _log_labs(results, date, source, user_id)
+        return _log_labs(results, date, source, _effective_user_id(user_id))
 
     @mcp.tool()
     def get_labs(user_id: str | None = None) -> dict:
         """Retrieve full lab history — all draws with dates, sources, results, and the computed latest values. Use this to check what labs are on file, compare across draws, and identify gaps."""
-        return _get_labs(user_id)
+        return _get_labs(_effective_user_id(user_id))
 
     @mcp.tool()
     def calendar_list_events(
@@ -3571,7 +3583,7 @@ def register_tools(mcp: FastMCP):
         user_id: str | None = None,
     ) -> dict:
         """List upcoming Google Calendar events. Returns events with title, start/end times, location, and description. Defaults to upcoming events from now. Use time_min/time_max (ISO 8601) to filter a date range. Use calendar_id to target a specific calendar (default 'primary')."""
-        return _calendar_list_events(time_min, time_max, max_results, query, calendar_id, user_id)
+        return _calendar_list_events(time_min, time_max, max_results, query, calendar_id, _effective_user_id(user_id))
 
     @mcp.tool()
     def calendar_create_event(
@@ -3584,7 +3596,7 @@ def register_tools(mcp: FastMCP):
         user_id: str | None = None,
     ) -> dict:
         """Create a Google Calendar event. Start/end can be ISO 8601 datetime (e.g. '2026-06-26T09:00:00') for timed events or YYYY-MM-DD for all-day events. Use calendar_id to target a specific calendar (default 'primary'). For training events, use the Health calendar."""
-        return _calendar_create_event(summary, start, end, description, location, calendar_id, user_id)
+        return _calendar_create_event(summary, start, end, description, location, calendar_id, _effective_user_id(user_id))
 
     @mcp.tool()
     def calendar_search_events(
@@ -3596,12 +3608,12 @@ def register_tools(mcp: FastMCP):
         user_id: str | None = None,
     ) -> dict:
         """Search Google Calendar events by text. Searches event titles, descriptions, locations, and attendees. Use to find specific events like 'lab retest' or 'training'. Use calendar_id to target a specific calendar."""
-        return _calendar_search_events(query, time_min, time_max, max_results, calendar_id, user_id)
+        return _calendar_search_events(query, time_min, time_max, max_results, calendar_id, _effective_user_id(user_id))
 
     @mcp.tool()
     def get_api_stats(days: int = 7, user_id: str | None = None) -> dict:
         """API latency and error report. Shows p50/p95/max latency per tool, error counts, timeout counts, and flags slow tools (>5s p95). Use for debugging performance issues and monitoring system health."""
-        return _get_api_stats(days, user_id)
+        return _get_api_stats(days, _effective_user_id(user_id))
 
     @mcp.tool()
     def get_skill_ladder(goal_id: str) -> dict:
@@ -3616,17 +3628,17 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     def check_health_priorities(user_id: str | None = None) -> dict:
         """Run a health priority checkpoint. Scans all available health data (labs, BP, wearable metrics) for red-flag conditions like pre-diabetic glucose, thyroid abnormalities, high blood pressure, low testosterone, elevated LDL, and more. Returns flags with severity (urgent/notable), coaching-appropriate language, and connections to the user's current goal. Call this after new lab results arrive or during periodic reviews to catch findings that may override the user's chosen coaching focus."""
-        return _check_health_priorities_tool(user_id)
+        return _check_health_priorities_tool(_effective_user_id(user_id))
 
     @mcp.tool()
     def ingest_health_snapshot(user_id: str, metrics: dict, timestamp: str | None = None) -> dict:
         """Ingest a daily health snapshot from an iOS Shortcut (Apple Health bridge). Accepts a flat dict of metric values from HealthKit. Valid keys: resting_hr, hrv_sdnn, steps, sleep_hours, sleep_start, sleep_end, weight_lbs, vo2_max, blood_oxygen, active_calories, respiratory_rate. All metrics optional individually. Appends to daily series and updates rolling averages for scoring."""
-        return _ingest_health_snapshot(user_id, metrics, timestamp)
+        return _ingest_health_snapshot(_effective_user_id(user_id), metrics, timestamp)
 
     @mcp.tool()
     def get_person_context(person_id: str | None = None, user_id: str | None = None) -> dict:
         """Get unified coaching context for a person: profile, habits, check-ins from Kasane + health metrics from CSVs. Look up by person_id (Kasane UUID) or user_id (health-engine user like 'default'). Returns merged dict for full coaching context."""
-        return _get_person_context(person_id, user_id)
+        return _get_person_context(person_id, _effective_user_id(user_id))
 
 
 
@@ -3658,7 +3670,7 @@ def register_tools(mcp: FastMCP):
     @mcp.tool()
     def get_conversations(user_id: str | None = None, days: int = 7) -> dict:
         """Get recent conversation history for a user. Returns all messages (user + assistant) from the last N days. Call this at the start of a session to understand what you have already discussed with this user. If user_id is omitted, returns conversations for all users."""
-        return _get_conversations(user_id, days)
+        return _get_conversations(_effective_user_id(user_id), days)
 
 def register_resources(mcp: FastMCP):
     """Register MCP resources (readable documents)."""

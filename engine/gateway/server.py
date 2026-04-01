@@ -638,7 +638,33 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
         register_tools(mcp_server)
         register_resources(mcp_server)
 
-        # Auth middleware: require a valid API token on every MCP request
+        # Auth middleware: require a valid API token on every MCP request.
+        # Resolves per-user tokens to health_engine_user_id and sets contextvar
+        # so tools know which user is calling without explicit user_id param.
+        from engine.db_read import authenticated_user_id
+
+        def _resolve_token_to_user_id(token: str) -> str | None:
+            """Look up a per-user token's health_engine_user_id."""
+            if token not in config.token_persons:
+                return None
+            person_ids = config.token_persons[token]
+            if isinstance(person_ids, str):
+                person_ids = [person_ids]
+            if not person_ids:
+                return None
+            # Look up the first person's health_engine_user_id
+            try:
+                from engine.gateway.db import get_db, init_db
+                init_db()
+                db = get_db()
+                row = db.execute(
+                    "SELECT health_engine_user_id FROM person WHERE id = ? AND deleted_at IS NULL",
+                    (person_ids[0],),
+                ).fetchone()
+                return row["health_engine_user_id"] if row else None
+            except Exception:
+                return None
+
         class MCPAuthMiddleware:
             def __init__(self, app):
                 self.app = app
@@ -651,21 +677,26 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
                     if auth.startswith("Bearer "):
                         token = auth[7:]
                     if not token:
-                        # Check query param as fallback
                         token = request.query_params.get("token")
                     # Validate against gateway config
                     valid = False
+                    resolved_user_id = None
                     if token:
-                        if config.api_token and token == config.api_token:
+                        if token in config.token_persons:
                             valid = True
-                        elif token in config.token_persons:
+                            resolved_user_id = _resolve_token_to_user_id(token)
+                        elif config.api_token and token == config.api_token:
                             valid = True
+                            resolved_user_id = config.admin_user_id or None
                     if not valid:
                         response = StarletteJSONResponse(
                             {"error": "Invalid or missing token"}, status_code=403
                         )
                         await response(scope, receive, send)
                         return
+                    # Set contextvar so tools know the authenticated user
+                    if resolved_user_id:
+                        authenticated_user_id.set(resolved_user_id)
                 await self.app(scope, receive, send)
 
         mcp_app = mcp_server.streamable_http_app()

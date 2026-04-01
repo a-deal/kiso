@@ -22,6 +22,8 @@ class GatewayConfig:
     tunnel_domain: str = ""
     hmac_secret: str = ""
     api_token: str = ""
+    # health_engine_user_id for the admin api_token holder (e.g. "andrew")
+    admin_user_id: str = ""
     sessions_dir: str = ""
     google_client_secrets_path: str = ""
     # Per-token person access control. Maps token -> list of allowed person IDs.
@@ -52,6 +54,7 @@ def load_gateway_config(path: str | Path | None = None) -> GatewayConfig:
         tunnel_domain=raw.get("tunnel_domain", ""),
         hmac_secret=raw.get("hmac_secret", ""),
         api_token=raw.get("api_token", ""),
+        admin_user_id=raw.get("admin_user_id", ""),
         sessions_dir=raw.get("sessions_dir", ""),
         google_client_secrets_path=raw.get("google_client_secrets_path", ""),
         token_persons=raw.get("token_persons", {}),
