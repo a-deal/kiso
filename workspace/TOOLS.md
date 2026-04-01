@@ -47,10 +47,33 @@ web_fetch("https://auth.mybaseline.health/api/log_habits?token=NZCT4pzvxC36OSaCz
 | log_labs | results (JSON dict), date, source, user_id | Log lab results. Names auto-normalize ("Apo B" = "apob"). |
 | log_nudge | user_id, nudge_type | Record that a nudge was sent (day1, day3, day7). |
 
+### Workout Programs — Log & Track Against a Plan
+
+| Tool | Key Params | What it does |
+|------|-----------|------|
+| log_workout | exercises, program_day, rpe, sentiment, energy_level, sleep_quality, notes, user_id | Log a workout against the user's active program. exercises is semicolon-separated: "Back Squat 4x5 @155 RPE 7; RDL 3x8 @135". program_day (1-4) cross-checks adherence. Returns logged exercises + adherence %. |
+| get_workout_program | user_id | Get the user's active program with all days and prescribed exercises. Call this to know what they should be doing. |
+| get_workout_history | days, user_id | Recent workout sessions with exercises, program adherence, and notes. **Call at session start** to know what they did last time. |
+
+**Workout check-in flow:**
+1. User says "just finished Day 2" or describes their workout
+2. Call `get_workout_program` to see what Day 2 prescribes
+3. Parse their message into the exercises format
+4. Call `log_workout` with program_day=2 and the parsed exercises
+5. Report back: what they did, adherence, and any coaching notes
+6. If they mention sleep, energy, or how they felt, include sentiment/energy_level/sleep_quality
+
+**Exercise format examples:**
+- `Back Squat 4x5 @155 RPE 7` — full detail
+- `Push-ups 3xmax` — bodyweight
+- `Airdyne Intervals 6x30s/90s` — conditioning
+- `Leg Curl skipped` — marks as not completed
+
 ### Querying
 
 | Tool | Key Params | What it does |
 |------|-----------|------|
+| get_conversations | user_id, days | Prior conversation history. **Call at session start** to know what you already discussed. Sessions reset often, so this is your only memory of past conversations. |
 | get_meals | date, days, user_id | Meals + Garmin burn for a date or range. Shows surplus/deficit. |
 | get_labs | user_id | Full lab history: all draws, dates, sources, latest values. |
 | get_protocols | user_id | Active protocol progress: day, week, phase, habit completion. |

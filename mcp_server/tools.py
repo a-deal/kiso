@@ -719,6 +719,284 @@ def _log_session(
     return {"logged": True, "date": date, "rpe": rpe, "duration_min": duration_min, "type": session_type}
 
 
+# ── Workout Program Tools ────────────────────────────────────────────
+
+
+def _log_workout(
+    exercises: str,
+    program_day: int | None = None,
+    rpe: float | None = None,
+    duration_min: float | None = None,
+    sentiment: str | None = None,
+    energy_level: int | None = None,
+    sleep_quality: str | None = None,
+    notes: str | None = None,
+    date: str | None = None,
+    user_id: str | None = None,
+) -> dict:
+    """Log a workout against the user's active program.
+
+    exercises: semicolon-separated exercise entries.
+    Each entry: 'exercise_name sets x reps @ weight_lbs RPE rpe'
+    Examples:
+      'Back Squat 4x5 @155 RPE 7; RDL 3x8 @135 RPE 8; Leg Curl skipped'
+      'Airdyne Intervals 6x30s/90s; Push-ups 3x15; Plank 3x30s'
+    """
+    import uuid as _uuid
+    date = date or datetime.now().strftime("%Y-%m-%d")
+    person_id = _resolve_person_id(user_id)
+    if not person_id:
+        return {"error": f"Unknown user_id: {user_id}"}
+
+    from engine.gateway.db import get_db, init_db
+    init_db()
+    db = get_db()
+    now = datetime.now().isoformat()
+
+    # Find active program
+    program = db.execute(
+        "SELECT id FROM workout_program WHERE person_id = ? AND status = 'active' ORDER BY start_date DESC LIMIT 1",
+        (person_id,),
+    ).fetchone()
+
+    program_id = program["id"] if program else None
+    program_day_id = None
+    prescribed_map = {}
+
+    # Resolve program day if specified
+    if program_id and program_day is not None:
+        day_row = db.execute(
+            "SELECT id FROM program_day WHERE program_id = ? AND day_number = ?",
+            (program_id, program_day),
+        ).fetchone()
+        if day_row:
+            program_day_id = day_row["id"]
+            # Load prescribed exercises for comparison
+            prescribed_rows = db.execute(
+                "SELECT id, exercise_name, sets, reps, rpe_target FROM prescribed_exercise WHERE program_day_id = ? ORDER BY sort_order",
+                (program_day_id,),
+            ).fetchall()
+            prescribed_map = {row["exercise_name"].lower(): dict(row) for row in prescribed_rows}
+
+    # Create training session
+    session_id = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:workout:{date}:{now}"))
+    db.execute(
+        "INSERT INTO training_session (id, person_id, date, rpe, duration_min, type, name, notes, source, "
+        "program_id, program_day_id, sentiment, energy_level, sleep_quality, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, person_id, date, rpe, duration_min, "workout", None, notes, "milo",
+         program_id, program_day_id, sentiment, energy_level, sleep_quality, now, now),
+    )
+
+    # Parse and log exercises
+    logged_exercises = []
+    for entry in exercises.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parsed = _parse_exercise_entry(entry)
+        if not parsed:
+            logged_exercises.append({"raw": entry, "error": "could not parse"})
+            continue
+
+        ex_name = parsed["exercise_name"]
+        prescribed_id = None
+        if prescribed_map:
+            match = prescribed_map.get(ex_name.lower())
+            if match:
+                prescribed_id = match["id"]
+
+        set_id = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{session_id}:{ex_name}"))
+        db.execute(
+            "INSERT OR REPLACE INTO strength_set (id, session_id, person_id, date, exercise, weight_lbs, reps, rpe, "
+            "notes, prescribed_exercise_id, completed, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (set_id, session_id, person_id, date, ex_name,
+             parsed.get("weight_lbs"), parsed.get("reps"), parsed.get("rpe"),
+             parsed.get("notes"), prescribed_id, parsed.get("completed", 1), now, now),
+        )
+        logged_exercises.append(parsed)
+
+    # Also dual-write session to CSV for backward compat
+    data_dir = _data_dir(user_id)
+    path = data_dir / "session_log.csv"
+    csv_row = {
+        "date": date,
+        "rpe": str(rpe) if rpe else "",
+        "duration_min": str(duration_min) if duration_min else "",
+        "type": "workout",
+        "name": f"Day {program_day}" if program_day else "workout",
+        "notes": notes or "",
+    }
+    append_csv(path, csv_row, fieldnames=["date", "rpe", "duration_min", "type", "name", "notes"])
+
+    db.commit()
+
+    # Build adherence summary if logging against a program day
+    adherence = None
+    if prescribed_map:
+        performed_names = {e["exercise_name"].lower() for e in logged_exercises if isinstance(e, dict) and "exercise_name" in e}
+        prescribed_names = set(prescribed_map.keys())
+        completed = performed_names & prescribed_names
+        skipped = prescribed_names - performed_names
+        extras = performed_names - prescribed_names
+        adherence = {
+            "prescribed": len(prescribed_names),
+            "completed": len(completed),
+            "skipped": list(skipped),
+            "extras": list(extras),
+            "adherence_pct": round(len(completed) / len(prescribed_names) * 100) if prescribed_names else 100,
+        }
+
+    return {
+        "logged": True,
+        "session_id": session_id,
+        "date": date,
+        "program_day": program_day,
+        "exercises": logged_exercises,
+        "adherence": adherence,
+        "sentiment": sentiment,
+    }
+
+
+def _parse_exercise_entry(entry: str) -> dict | None:
+    """Parse a natural-language exercise entry.
+
+    Handles formats like:
+      'Back Squat 4x5 @155 RPE 7'
+      'Airdyne Intervals 6x30s/90s'
+      'Leg Curl skipped'
+      'Push-ups 3xmax'
+    """
+    import re
+    entry = entry.strip()
+    if not entry:
+        return None
+
+    # Check for 'skipped'
+    if entry.lower().endswith("skipped"):
+        name = entry[: entry.lower().rfind("skipped")].strip()
+        return {"exercise_name": name, "completed": 0, "notes": "skipped"}
+
+    # Try to extract sets x reps pattern
+    # Match: Name SETSxREPS @WEIGHT RPE X
+    match = re.match(
+        r"^(.+?)\s+(\d+)\s*x\s*(\S+)"   # name, sets, reps (reps can be "5", "max", "30s/90s")
+        r"(?:\s*@\s*(\d+(?:\.\d+)?))?"     # optional weight
+        r"(?:\s*RPE\s*(\d+(?:\.\d+)?))?"    # optional RPE
+        r"(?:\s*(.+))?$",                   # optional trailing notes
+        entry,
+        re.IGNORECASE,
+    )
+    if match:
+        name, sets, reps, weight, rpe, trail_notes = match.groups()
+        result = {
+            "exercise_name": name.strip(),
+            "sets": int(sets),
+            "reps_raw": reps,
+            "completed": 1,
+        }
+        # Try to parse reps as int
+        try:
+            result["reps"] = int(reps)
+        except ValueError:
+            result["reps"] = None  # "max", "30s/90s" etc
+            result["notes"] = reps
+
+        if weight:
+            result["weight_lbs"] = float(weight)
+        if rpe:
+            result["rpe"] = float(rpe)
+        if trail_notes:
+            result["notes"] = trail_notes.strip()
+        return result
+
+    # Fallback: just the name with no structured data
+    return {"exercise_name": entry, "completed": 1}
+
+
+def _get_workout_history(
+    days: int = 14,
+    user_id: str | None = None,
+) -> dict:
+    """Get recent workout sessions with exercises, program adherence, and notes."""
+    person_id = _resolve_person_id(user_id)
+    if not person_id:
+        return {"error": f"Unknown user_id: {user_id}"}
+
+    from engine.gateway.db import get_db, init_db
+    init_db()
+    db = get_db()
+
+    cutoff = (datetime.now() - __import__("datetime").timedelta(days=days)).strftime("%Y-%m-%d")
+
+    sessions = db.execute(
+        "SELECT ts.*, pd.name as day_name, pd.day_number, wp.name as program_name "
+        "FROM training_session ts "
+        "LEFT JOIN program_day pd ON ts.program_day_id = pd.id "
+        "LEFT JOIN workout_program wp ON ts.program_id = wp.id "
+        "WHERE ts.person_id = ? AND ts.date >= ? "
+        "ORDER BY ts.date DESC",
+        (person_id, cutoff),
+    ).fetchall()
+
+    results = []
+    for s in sessions:
+        session_dict = dict(s)
+        # Get exercises for this session
+        exercises = db.execute(
+            "SELECT ss.*, pe.exercise_name as prescribed_name, pe.sets as prescribed_sets, "
+            "pe.reps as prescribed_reps, pe.rpe_target "
+            "FROM strength_set ss "
+            "LEFT JOIN prescribed_exercise pe ON ss.prescribed_exercise_id = pe.id "
+            "WHERE ss.session_id = ? ORDER BY ss.created_at",
+            (s["id"],),
+        ).fetchall()
+        session_dict["exercises"] = [dict(e) for e in exercises]
+        results.append(session_dict)
+
+    return {"sessions": results, "count": len(results), "days_back": days}
+
+
+def _get_workout_program(
+    user_id: str | None = None,
+) -> dict:
+    """Get the user's active workout program with all days and prescribed exercises."""
+    person_id = _resolve_person_id(user_id)
+    if not person_id:
+        return {"error": f"Unknown user_id: {user_id}"}
+
+    from engine.gateway.db import get_db, init_db
+    init_db()
+    db = get_db()
+
+    program = db.execute(
+        "SELECT * FROM workout_program WHERE person_id = ? AND status = 'active' ORDER BY start_date DESC LIMIT 1",
+        (person_id,),
+    ).fetchone()
+
+    if not program:
+        return {"error": "No active program found", "user_id": user_id}
+
+    program_dict = dict(program)
+    days = db.execute(
+        "SELECT * FROM program_day WHERE program_id = ? ORDER BY sort_order, day_number",
+        (program["id"],),
+    ).fetchall()
+
+    program_dict["days"] = []
+    for day in days:
+        day_dict = dict(day)
+        exercises = db.execute(
+            "SELECT * FROM prescribed_exercise WHERE program_day_id = ? ORDER BY sort_order",
+            (day["id"],),
+        ).fetchall()
+        day_dict["exercises"] = [dict(e) for e in exercises]
+        program_dict["days"].append(day_dict)
+
+    return program_dict
+
+
 def _log_meal(
     description: str,
     protein_g: float,
@@ -2816,6 +3094,113 @@ def _send_message(channel: str, user_id: str, message: str) -> dict:
 
 
 # =====================================================================
+# Conversation message ingestion + querying
+# =====================================================================
+
+
+def _ingest_message(
+    role: str,
+    content: str,
+    sender_id: str = "",
+    sender_name: str = "",
+    channel: str = "",
+    channel_id: str = "",
+    session_key: str = "",
+    message_id: str = "",
+    timestamp: str | None = None,
+) -> dict:
+    """Ingest a conversation message from OpenClaw hook into kasane.db."""
+    from datetime import datetime, timezone
+    from engine.gateway.db import get_db, get_phone_to_user_map
+
+    now = datetime.now(timezone.utc).isoformat()
+    ts = timestamp or now
+
+    # Resolve user_id from sender_id (phone number or telegram ID)
+    user_id = None
+    if role == "user" and sender_id:
+        phone_map = get_phone_to_user_map()
+        if sender_id in phone_map:
+            user_id = phone_map[sender_id]["user_id"]
+        else:
+            # Try stripping + prefix
+            clean = sender_id.lstrip("+")
+            if clean in phone_map:
+                user_id = phone_map[clean]["user_id"]
+    elif role == "assistant":
+        # For outbound messages, extract user from session_key
+        # Format: agent:main:whatsapp:direct:+17033625977
+        if session_key:
+            parts = session_key.split(":")
+            if len(parts) >= 5:
+                target_id = parts[-1]
+                phone_map = get_phone_to_user_map()
+                if target_id in phone_map:
+                    user_id = phone_map[target_id]["user_id"]
+                else:
+                    clean = target_id.lstrip("+")
+                    if clean in phone_map:
+                        user_id = phone_map[clean]["user_id"]
+
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO conversation_message
+           (user_id, role, content, sender_id, sender_name, channel,
+            session_key, message_id, timestamp, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, role, content, sender_id, sender_name, channel,
+         session_key, message_id, ts, now),
+    )
+    conn.commit()
+
+    return {"status": "ok", "user_id": user_id, "role": role, "timestamp": ts}
+
+
+def _get_conversations(
+    user_id: str | None = None,
+    days: int = 7,
+) -> dict:
+    """Get recent conversation messages, optionally filtered by user."""
+    from engine.gateway.db import get_db
+
+    conn = get_db()
+    if user_id:
+        rows = conn.execute(
+            """SELECT user_id, role, content, sender_name, channel,
+                      session_key, timestamp
+               FROM conversation_message
+               WHERE user_id = ? AND timestamp >= datetime('now', ?)
+               ORDER BY timestamp""",
+            (user_id, f"-{days} days"),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT user_id, role, content, sender_name, channel,
+                      session_key, timestamp
+               FROM conversation_message
+               WHERE timestamp >= datetime('now', ?)
+               ORDER BY user_id, timestamp""",
+            (f"-{days} days",),
+        ).fetchall()
+
+    messages = [dict(r) for r in rows]
+
+    # Group by user for readability
+    by_user = {}
+    for m in messages:
+        uid = m["user_id"] or "unknown"
+        if uid not in by_user:
+            by_user[uid] = []
+        by_user[uid].append(m)
+
+    return {
+        "total_messages": len(messages),
+        "users": list(by_user.keys()),
+        "conversations": by_user,
+    }
+
+
+# =====================================================================
 # Tool registry for HTTP API access
 # =====================================================================
 
@@ -2863,6 +3248,8 @@ TOOL_REGISTRY = {
     "get_coach_tasks": _get_coach_tasks,
     "complete_coach_task": _complete_coach_task,
     "send_message": _send_message,
+    "ingest_message": _ingest_message,
+    "get_conversations": _get_conversations,
     # Excluded from HTTP: auth_garmin (interactive), auth_oura (interactive),
     # auth_whoop (interactive), open_dashboard (browser)
 }
@@ -2958,6 +3345,42 @@ def register_tools(mcp: FastMCP):
     def log_session(rpe: float, duration_min: float | None = None, session_type: str = "training", name: str = "", date: str | None = None, user_id: str | None = None) -> dict:
         """Log a training session RPE (1-10 scale). Call after any workout. Merges with Garmin data for ACWR computation. If Garmin captured the workout, you only need the RPE. Duration is optional (Garmin provides it)."""
         return _log_session(rpe, duration_min, session_type, name, date, user_id)
+
+    @mcp.tool()
+    def log_workout(
+        exercises: str,
+        program_day: int | None = None,
+        rpe: float | None = None,
+        duration_min: float | None = None,
+        sentiment: str | None = None,
+        energy_level: int | None = None,
+        sleep_quality: str | None = None,
+        notes: str | None = None,
+        date: str | None = None,
+        user_id: str | None = None,
+    ) -> dict:
+        """Log a workout against the user's active training program. Use this when a user checks in after a gym session or home workout.
+
+        exercises: semicolon-separated. Format: 'Exercise Name SETSxREPS @WEIGHT RPE X'
+        Examples: 'Back Squat 4x5 @155 RPE 7; RDL 3x8 @135 RPE 8; Leg Curl skipped'
+
+        program_day: which day of their program (1, 2, 3, 4). Matches against prescribed exercises.
+        sentiment: 'great', 'good', 'ok', 'rough', 'bad'
+        energy_level: 1-5
+        sleep_quality: 'good', 'poor', 'terrible'
+
+        Returns logged exercises, adherence vs program, and any coaching flags."""
+        return _log_workout(exercises, program_day, rpe, duration_min, sentiment, energy_level, sleep_quality, notes, date, user_id)
+
+    @mcp.tool()
+    def get_workout_history(days: int = 14, user_id: str | None = None) -> dict:
+        """Get recent workout sessions with exercises, program adherence, and notes. Call at session start to know what happened last time. Returns sessions with performed exercises cross-referenced against the prescribed program."""
+        return _get_workout_history(days, user_id)
+
+    @mcp.tool()
+    def get_workout_program(user_id: str | None = None) -> dict:
+        """Get the user's active workout program with all days and prescribed exercises. Shows what they should be doing on each training day."""
+        return _get_workout_program(user_id)
 
     @mcp.tool()
     def get_status(user_id: str | None = None) -> dict:
@@ -3228,6 +3651,11 @@ def register_tools(mcp: FastMCP):
     def save_coaching_message(person_id: str, message_text: str, habit_id: str | None = None, message_type: str = "coaching", user_id: str | None = None) -> dict:
         """Save a coaching message to kasane.db so it syncs to the Kasane iOS app. Call this after sending a coaching response to ensure the user sees it in-app too. person_id is the Kasane UUID."""
         return _save_coaching_message(person_id, message_text, habit_id, message_type, user_id)
+
+    @mcp.tool()
+    def get_conversations(user_id: str | None = None, days: int = 7) -> dict:
+        """Get recent conversation history for a user. Returns all messages (user + assistant) from the last N days. Call this at the start of a session to understand what you have already discussed with this user. If user_id is omitted, returns conversations for all users."""
+        return _get_conversations(user_id, days)
 
 def register_resources(mcp: FastMCP):
     """Register MCP resources (readable documents)."""

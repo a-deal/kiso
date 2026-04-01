@@ -325,6 +325,58 @@ CREATE TABLE IF NOT EXISTS wearable_token (
     updated_at TEXT NOT NULL
 );
 
+-- Workout programming tables
+
+CREATE TABLE IF NOT EXISTS workout_program (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    days_per_week INTEGER,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS program_day (
+    id TEXT PRIMARY KEY,
+    program_id TEXT NOT NULL REFERENCES workout_program(id),
+    day_number INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    day_type TEXT,
+    notes TEXT,
+    sort_order INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS prescribed_exercise (
+    id TEXT PRIMARY KEY,
+    program_day_id TEXT NOT NULL REFERENCES program_day(id),
+    exercise_name TEXT NOT NULL,
+    sets INTEGER,
+    reps TEXT,
+    rpe_target REAL,
+    rest_seconds INTEGER,
+    notes TEXT,
+    sort_order INTEGER,
+    category TEXT
+);
+
+CREATE TABLE IF NOT EXISTS conversation_message (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    sender_id TEXT,
+    sender_name TEXT,
+    channel TEXT,
+    session_key TEXT,
+    message_id TEXT,
+    timestamp TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_wearable_token_user_service_name
     ON wearable_token(user_id, service, token_name);
 
@@ -347,6 +399,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_wearable_person_date ON wearable_daily(per
 CREATE INDEX IF NOT EXISTS idx_lab_draw_person ON lab_draw(person_id);
 CREATE INDEX IF NOT EXISTS idx_lab_result_person_marker ON lab_result(person_id, marker);
 CREATE INDEX IF NOT EXISTS idx_habit_log_person_date ON habit_log(person_id, date);
+
+CREATE INDEX IF NOT EXISTS idx_workout_program_person ON workout_program(person_id);
+CREATE INDEX IF NOT EXISTS idx_program_day_program ON program_day(program_id);
+CREATE INDEX IF NOT EXISTS idx_prescribed_exercise_day ON prescribed_exercise(program_day_id);
+
+CREATE INDEX IF NOT EXISTS idx_convo_user ON conversation_message(user_id);
+CREATE INDEX IF NOT EXISTS idx_convo_timestamp ON conversation_message(timestamp);
+CREATE INDEX IF NOT EXISTS idx_convo_session ON conversation_message(session_key);
 """
 
 
@@ -360,6 +420,7 @@ def init_db(db_path: Path | str | None = None):
 
 def _migrate(conn: sqlite3.Connection):
     """Safe migrations for existing databases. Each is idempotent."""
+    # Person table migrations
     cols = {row[1] for row in conn.execute("PRAGMA table_info(person)").fetchall()}
     migrations = {
         "wearables_json": "ALTER TABLE person ADD COLUMN wearables_json TEXT DEFAULT '[]'",
@@ -375,6 +436,30 @@ def _migrate(conn: sqlite3.Connection):
         if col not in cols:
             conn.execute(sql)
             dirty = True
+
+    # training_session: add program linkage columns
+    ts_cols = {row[1] for row in conn.execute("PRAGMA table_info(training_session)").fetchall()}
+    ts_migrations = {
+        "program_id": "ALTER TABLE training_session ADD COLUMN program_id TEXT REFERENCES workout_program(id)",
+        "program_day_id": "ALTER TABLE training_session ADD COLUMN program_day_id TEXT REFERENCES program_day(id)",
+        "sentiment": "ALTER TABLE training_session ADD COLUMN sentiment TEXT",
+        "energy_level": "ALTER TABLE training_session ADD COLUMN energy_level INTEGER",
+        "sleep_quality": "ALTER TABLE training_session ADD COLUMN sleep_quality TEXT",
+    }
+    for col, sql in ts_migrations.items():
+        if col not in ts_cols:
+            conn.execute(sql)
+            dirty = True
+
+    # strength_set: add prescribed_exercise linkage
+    ss_cols = {row[1] for row in conn.execute("PRAGMA table_info(strength_set)").fetchall()}
+    if "prescribed_exercise_id" not in ss_cols:
+        conn.execute("ALTER TABLE strength_set ADD COLUMN prescribed_exercise_id TEXT REFERENCES prescribed_exercise(id)")
+        dirty = True
+    if "completed" not in ss_cols:
+        conn.execute("ALTER TABLE strength_set ADD COLUMN completed INTEGER DEFAULT 1")
+        dirty = True
+
     if dirty:
         conn.commit()
 
@@ -472,6 +557,9 @@ ENTITY_TABLES = {
     "lab_draw": "lab_draw",
     "lab_result": "lab_result",
     "habit_log": "habit_log",
+    "workout_program": "workout_program",
+    "program_day": "program_day",
+    "prescribed_exercise": "prescribed_exercise",
 }
 
 # Columns per table (excluding id, created_at, updated_at, deleted_at which are handled generically)
@@ -522,9 +610,11 @@ TABLE_COLUMNS = {
     ],
     "training_session": [
         "person_id", "date", "rpe", "duration_min", "type", "name", "notes", "source",
+        "program_id", "program_day_id", "sentiment", "energy_level", "sleep_quality",
     ],
     "strength_set": [
         "session_id", "person_id", "date", "exercise", "weight_lbs", "reps", "rpe", "notes",
+        "prescribed_exercise_id", "completed",
     ],
     "wearable_daily": [
         "person_id", "date", "source", "rhr", "hrv", "hrv_weekly_avg", "hrv_status",
@@ -542,5 +632,16 @@ TABLE_COLUMNS = {
     ],
     "habit_log": [
         "person_id", "date", "habit_name", "completed", "notes",
+    ],
+    "workout_program": [
+        "person_id", "name", "description", "days_per_week", "start_date",
+        "end_date", "status",
+    ],
+    "program_day": [
+        "program_id", "day_number", "name", "day_type", "notes", "sort_order",
+    ],
+    "prescribed_exercise": [
+        "program_day_id", "exercise_name", "sets", "reps", "rpe_target",
+        "rest_seconds", "notes", "sort_order", "category",
     ],
 }
