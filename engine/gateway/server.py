@@ -638,10 +638,11 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
         register_tools(mcp_server)
         register_resources(mcp_server)
 
-        # Auth middleware: require a valid API token on every MCP request.
-        # Resolves per-user tokens to health_engine_user_id and sets contextvar
-        # so tools know which user is calling without explicit user_id param.
-        from engine.db_read import authenticated_user_id
+        # Auth middleware: validates tokens and injects user_id into MCP
+        # tool call arguments. Contextvars don't propagate through the MCP
+        # SDK's tool execution, so we modify the JSON-RPC request body
+        # directly before the SDK sees it.
+        import json as _json
 
         def _resolve_token_to_user_id(token: str) -> str | None:
             """Look up a per-user token's health_engine_user_id."""
@@ -652,7 +653,6 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
                 person_ids = [person_ids]
             if not person_ids:
                 return None
-            # Look up the first person's health_engine_user_id
             try:
                 from engine.gateway.db import get_db, init_db
                 init_db()
@@ -694,9 +694,34 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
                         )
                         await response(scope, receive, send)
                         return
-                    # Set contextvar so tools know the authenticated user
+
+                    # Inject user_id into tools/call JSON-RPC arguments.
+                    # This is more reliable than contextvars which don't
+                    # propagate through the MCP SDK's tool execution.
                     if resolved_user_id:
-                        authenticated_user_id.set(resolved_user_id)
+                        injected = False
+
+                        async def receive_with_user_id():
+                            nonlocal injected
+                            message = await receive()
+                            if not injected and message.get("type") == "http.request":
+                                body = message.get("body", b"")
+                                if body:
+                                    try:
+                                        data = _json.loads(body)
+                                        if data.get("method") == "tools/call":
+                                            args = data.get("params", {}).get("arguments", {})
+                                            if not args.get("user_id"):
+                                                args["user_id"] = resolved_user_id
+                                                data["params"]["arguments"] = args
+                                                message = {**message, "body": _json.dumps(data).encode()}
+                                                injected = True
+                                    except (ValueError, KeyError, TypeError):
+                                        pass
+                            return message
+
+                        await self.app(scope, receive_with_user_id, send)
+                        return
                 await self.app(scope, receive, send)
 
         mcp_app = mcp_server.streamable_http_app()
