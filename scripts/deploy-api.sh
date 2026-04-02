@@ -9,7 +9,8 @@ set -euo pipefail
 # Usage:
 #   ./scripts/deploy-api.sh              # Deploy + graceful restart
 #   ./scripts/deploy-api.sh --test-first # Run tests before deploying
-#   ./scripts/deploy-api.sh --cold       # Deploy + cold restart
+#   ./scripts/deploy-api.sh --hard       # Deploy + blue/green restart (code changes)
+#   ./scripts/deploy-api.sh --cold       # Deploy + cold restart (dep changes)
 
 REMOTE="mac-mini"
 REMOTE_DIR="~/src/health-engine"
@@ -26,6 +27,9 @@ for arg in "$@"; do
                 exit 1
             }
             echo ""
+            ;;
+        --hard)
+            RESTART_FLAG="--hard"
             ;;
         --cold)
             RESTART_FLAG="--cold"

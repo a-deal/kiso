@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Restart the Kiso API. Two modes:
+# Restart the Kiso API. Three modes:
 #
 #   --reload  (default) Graceful reload via HUP signal. Zero downtime.
-#             New workers start, old workers drain in-flight requests.
+#             Re-forks workers from existing master. Does NOT reimport
+#             modules when preload_app=True (use --hard for code changes).
 #
-#   --cold    Full stop/start. Use only when graceful reload fails
-#             or after dependency changes that require process restart.
+#   --hard    Blue/green restart via USR2. Zero downtime, fresh code.
+#             Spawns a new master (fresh imports), verifies health,
+#             then gracefully drains and kills the old master.
+#             Use after any code change.
 #
-# Gunicorn master process stays alive across reloads. Workers are replaced.
-# Tested: 30 concurrent health checks during reload, zero failures.
+#   --cold    Full stop/start. Downtime. Use only when blue/green fails
+#             or after dependency changes (new packages, etc).
 #
 # Usage (local on Mac Mini):
 #   ./scripts/restart-api.sh           # graceful reload (default)
-#   ./scripts/restart-api.sh --cold    # full restart
+#   ./scripts/restart-api.sh --hard    # blue/green (code changes)
+#   ./scripts/restart-api.sh --cold    # full restart (deps/emergency)
 #
 # Usage (remote from laptop):
-#   ssh mac-mini 'cd ~/src/health-engine && bash scripts/restart-api.sh'
+#   ssh mac-mini 'cd ~/src/health-engine && bash scripts/restart-api.sh --hard'
 
 SERVICE="com.baseline.gateway"
 PLIST="$HOME/Library/LaunchAgents/${SERVICE}.plist"
@@ -55,6 +59,81 @@ if [ "$MODE" = "--reload" ]; then
     else
         echo "No PID file at $PIDFILE. Doing cold start."
         MODE="--cold"
+    fi
+fi
+
+if [ "$MODE" = "--hard" ]; then
+    # Blue/green: USR2 spawns a new master while old one keeps serving
+    if [ ! -f "$PIDFILE" ]; then
+        echo "No PID file at $PIDFILE. Falling back to cold start."
+        MODE="--cold"
+    else
+        OLD_PID=$(cat "$PIDFILE")
+        if ! kill -0 "$OLD_PID" 2>/dev/null; then
+            echo "PID file exists but process $OLD_PID is dead. Falling back to cold start."
+            MODE="--cold"
+        else
+            echo "Blue/green restart: spawning new master via USR2 (old master PID $OLD_PID)..."
+
+            # Clear bytecode cache before new master loads
+            find ~/src/health-engine/engine/gateway/__pycache__ -name "*.pyc" -delete 2>/dev/null || true
+            find ~/src/health-engine/mcp_server/__pycache__ -name "*.pyc" -delete 2>/dev/null || true
+
+            # USR2: gunicorn forks a new master, writes PID to $PIDFILE.2
+            kill -USR2 "$OLD_PID"
+
+            # Wait for new master to come up and start serving
+            NEW_PIDFILE="${PIDFILE}.2"
+            for i in {1..15}; do
+                if [ -f "$NEW_PIDFILE" ]; then
+                    NEW_PID=$(cat "$NEW_PIDFILE")
+                    if kill -0 "$NEW_PID" 2>/dev/null; then
+                        break
+                    fi
+                fi
+                sleep 1
+            done
+
+            if [ ! -f "$NEW_PIDFILE" ] || ! kill -0 "$(cat "$NEW_PIDFILE")" 2>/dev/null; then
+                echo "ERROR: New master did not start within 15s. Old master still serving."
+                echo "Falling back to cold restart."
+                MODE="--cold"
+            else
+                NEW_PID=$(cat "$NEW_PIDFILE")
+                echo "New master running (PID $NEW_PID). Verifying health..."
+
+                # Give new workers time to boot
+                sleep 2
+
+                if curl -sf http://localhost:$PORT/health >/dev/null 2>&1; then
+                    echo "New master healthy. Draining old master (PID $OLD_PID)..."
+
+                    # WINCH: gracefully stop old master's workers
+                    kill -WINCH "$OLD_PID" 2>/dev/null || true
+                    sleep 2
+
+                    # QUIT: shut down old master
+                    kill -QUIT "$OLD_PID" 2>/dev/null || true
+
+                    # Wait for old master to exit
+                    for i in {1..10}; do
+                        if ! kill -0 "$OLD_PID" 2>/dev/null; then
+                            break
+                        fi
+                        sleep 1
+                    done
+
+                    echo "Blue/green complete. API serving on port $PORT ($(date +%H:%M:%S))"
+                    exit 0
+                else
+                    echo "ERROR: New master failed health check. Rolling back."
+                    # Kill the new master, old one is still serving
+                    kill -QUIT "$NEW_PID" 2>/dev/null || true
+                    echo "Rolled back to old master (PID $OLD_PID). API still serving."
+                    exit 1
+                fi
+            fi
+        fi
     fi
 fi
 
