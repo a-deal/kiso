@@ -198,6 +198,18 @@ def build_briefing(config: dict) -> dict:
     )
     profile = UserProfile(demographics=demo)
 
+    # Profile fields from config (family history, medications, PHQ-9, body measurements)
+    if profile_cfg.get("family_history") is not None:
+        profile.has_family_history = profile_cfg["family_history"]
+    if profile_cfg.get("medications") is not None:
+        profile.has_medication_list = True
+    if profile_cfg.get("phq9_score") is not None:
+        profile.phq9_score = profile_cfg["phq9_score"]
+    if profile_cfg.get("waist_inches") is not None:
+        profile.waist_circumference = profile_cfg["waist_inches"]
+    if profile_cfg.get("height_inches") is not None:
+        profile.height_inches = profile_cfg["height_inches"]
+
     if wearable:
         profile.resting_hr = wearable.get("resting_hr")
         profile.daily_steps_avg = wearable.get("daily_steps_avg")
