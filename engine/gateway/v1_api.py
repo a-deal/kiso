@@ -828,39 +828,62 @@ def _build_person_context(person_id: str) -> dict:
 
 
 def _load_health_context(user_id: str) -> dict:
-    """Load health metrics from CSVs for the given health-engine user_id."""
+    """Load health metrics for a user. SQLite first, CSV/JSON fallback."""
     from mcp_server.tools import _data_dir, _load_json_file
 
     data_dir = _data_dir(user_id)
     health = {}
 
-    # Weight trend (last 14 entries)
-    weight_path = data_dir / "weight_log.csv"
-    if weight_path.exists():
-        from engine.utils.csv_io import read_csv
-        rows = read_csv(weight_path)
-        health["weight_recent"] = rows[-14:] if rows else []
-
-    # Latest wearable snapshot (SQLite, JSON fallback for users not yet in wearable_daily)
+    # Resolve person_id for SQLite queries
+    _pid = None
     try:
-        from engine.gateway.db import get_db
+        from engine.gateway.db import get_db, init_db
+        init_db()
         _db = get_db()
         _prow = _db.execute(
             "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
             (user_id,),
         ).fetchone()
         if _prow:
+            _pid = _prow["id"]
+    except Exception:
+        pass
+
+    # Weight trend (last 14 entries) — SQLite first, CSV fallback
+    if _pid:
+        try:
+            _db = get_db()
+            _wt_rows = _db.execute(
+                "SELECT date, weight_lbs, waist_in, source FROM weight_entry "
+                "WHERE person_id = ? ORDER BY date DESC LIMIT 14",
+                (_pid,),
+            ).fetchall()
+            if _wt_rows:
+                health["weight_recent"] = [dict(r) for r in reversed(_wt_rows)]
+        except Exception:
+            pass
+    if "weight_recent" not in health:
+        weight_path = data_dir / "weight_log.csv"
+        if weight_path.exists():
+            from engine.utils.csv_io import read_csv
+            rows = read_csv(weight_path)
+            health["weight_recent"] = rows[-14:] if rows else []
+
+    # Latest wearable snapshot — SQLite first, JSON fallback
+    if _pid:
+        try:
+            _db = get_db()
             _wrow = _db.execute(
                 "SELECT * FROM wearable_daily WHERE person_id = ? "
                 "ORDER BY date DESC, "
                 "CASE source WHEN 'garmin' THEN 1 WHEN 'apple_health' THEN 2 ELSE 3 END "
-                "LIMIT 1", (_prow["id"],)
+                "LIMIT 1", (_pid,)
             ).fetchone()
             if _wrow:
                 health["wearable_snapshot"] = dict(_wrow)
                 health["wearable_source"] = _wrow["source"] or "garmin"
-    except Exception:
-        pass
+        except Exception:
+            pass
     if "wearable_snapshot" not in health:
         for fname in ("garmin_latest.json", "oura_latest.json", "whoop_latest.json", "apple_health_latest.json"):
             snapshot = _load_json_file(data_dir / fname)
@@ -869,18 +892,44 @@ def _load_health_context(user_id: str) -> dict:
                 health["wearable_source"] = fname.replace("_latest.json", "")
                 break
 
-    # Latest labs
-    labs = _load_json_file(data_dir / "lab_results.json")
-    if labs and "latest" in labs:
-        health["latest_labs"] = labs["latest"]
+    # Latest labs — SQLite first, JSON fallback
+    if _pid:
+        try:
+            _db = get_db()
+            _lab_rows = _db.execute(
+                "SELECT lr.marker, lr.value, lr.unit, lr.flag, ld.date "
+                "FROM lab_result lr JOIN lab_draw ld ON lr.draw_id = ld.id "
+                "WHERE lr.person_id = ? ORDER BY ld.date DESC LIMIT 20",
+                (_pid,),
+            ).fetchall()
+            if _lab_rows:
+                health["latest_labs"] = [dict(r) for r in _lab_rows]
+        except Exception:
+            pass
+    if "latest_labs" not in health:
+        labs = _load_json_file(data_dir / "lab_results.json")
+        if labs and "latest" in labs:
+            health["latest_labs"] = labs["latest"]
 
-    # Today's meals
-    meal_path = data_dir / "meal_log.csv"
-    if meal_path.exists():
-        from engine.utils.csv_io import read_csv
-        today = datetime.now().strftime("%Y-%m-%d")
-        rows = read_csv(meal_path)
-        health["meals_today"] = [r for r in rows if r.get("date") == today]
+    # Today's meals — SQLite first, CSV fallback
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _pid:
+        try:
+            _db = get_db()
+            _meal_rows = _db.execute(
+                "SELECT * FROM meal_entry WHERE person_id = ? AND date = ?",
+                (_pid, today),
+            ).fetchall()
+            if _meal_rows:
+                health["meals_today"] = [dict(r) for r in _meal_rows]
+        except Exception:
+            pass
+    if "meals_today" not in health:
+        meal_path = data_dir / "meal_log.csv"
+        if meal_path.exists():
+            from engine.utils.csv_io import read_csv
+            rows = read_csv(meal_path)
+            health["meals_today"] = [r for r in rows if r.get("date") == today]
 
     return health
 

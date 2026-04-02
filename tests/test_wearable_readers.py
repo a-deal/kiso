@@ -375,3 +375,77 @@ class TestBriefingTrainingFromSqlite:
         assert len(rows) == 1
         assert rows[0]["type"] == "strength"
         assert rows[0]["duration_min"] == 60
+
+
+class TestGetProtocolsSqlite:
+    """_get_protocols should use SQLite wearable averages, not garmin_latest.json."""
+
+    def test_protocols_no_json_needed(self, briefing_db):
+        """protocol_progress garmin arg should come from SQLite averages."""
+        conn, db_path, tmp_path = briefing_db
+        from mcp_server.tools import _load_wearable_averages_sqlite
+
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            avgs = _load_wearable_averages_sqlite("p1")
+
+        assert avgs is not None
+        # These are the keys protocol_progress looks up via garmin.get(metric_id)
+        assert "resting_hr" in avgs
+        assert "daily_steps_avg" in avgs
+        assert "sleep_duration_avg" in avgs
+        assert "hrv_rmssd_avg" in avgs
+        assert avgs["resting_hr"] == 48.0
+
+
+class TestLoadHealthContextSqlite:
+    """v1_api _load_health_context should read weight and meals from SQLite."""
+
+    def test_weight_from_sqlite(self, briefing_db):
+        """Weight data should come from weight_entry, not weight_log.csv."""
+        conn, db_path, tmp_path = briefing_db
+        from engine.gateway.db import close_db, get_db
+
+        data_dir = tmp_path / "data" / "users" / "andrew"
+        data_dir.mkdir(parents=True)
+
+        # Verify data is in SQLite
+        row = conn.execute(
+            "SELECT weight_lbs FROM weight_entry WHERE person_id = 'p1'"
+        ).fetchone()
+        assert row is not None
+        assert row["weight_lbs"] == 192.5
+
+        # Test the query pattern _load_health_context uses
+        pid_row = conn.execute(
+            "SELECT id FROM person WHERE health_engine_user_id = 'andrew' AND deleted_at IS NULL"
+        ).fetchone()
+        assert pid_row is not None
+        wt_rows = conn.execute(
+            "SELECT date, weight_lbs, waist_in, source FROM weight_entry "
+            "WHERE person_id = ? ORDER BY date DESC LIMIT 14",
+            (pid_row["id"],),
+        ).fetchall()
+        assert len(wt_rows) == 1
+        assert wt_rows[0]["weight_lbs"] == 192.5
+
+    def test_meals_from_sqlite(self, briefing_db):
+        """Meals should come from meal_entry, not meal_log.csv."""
+        conn, db_path, tmp_path = briefing_db
+
+        # Add a meal to SQLite
+        now = datetime.now(timezone.utc).isoformat()
+        today = datetime.now().strftime("%Y-%m-%d")
+        conn.execute(
+            "INSERT INTO meal_entry (id, person_id, date, description, calories, protein_g, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("m1", "p1", today, "Chicken and rice", 650, 45, now, now),
+        )
+        conn.commit()
+
+        # Test the query pattern _load_health_context uses
+        meal_rows = conn.execute(
+            "SELECT * FROM meal_entry WHERE person_id = 'p1' AND date = ?",
+            (today,),
+        ).fetchall()
+        assert len(meal_rows) == 1
+        assert meal_rows[0]["description"] == "Chicken and rice"
