@@ -296,3 +296,141 @@ class TestIngestEndpoint:
         data = response.json()
         assert data["ingested"] is True
         assert data["metrics_count"] == 2
+
+
+# --- SQLite wearable_daily dual-write tests ---
+
+class TestIngestWritesWearableDaily:
+    """Verify _ingest_health_snapshot writes to wearable_daily SQLite table."""
+
+    @pytest.fixture
+    def setup_db(self, tmp_path):
+        """Create a temp SQLite DB with a person row, return (data_dir, db_path, person_id)."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        db = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+        person_id = "p-test-001"
+        db.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (person_id, "Test User", "test_user", now, now),
+        )
+        db.commit()
+
+        data_dir = tmp_path / "data" / "users" / "test_user"
+        data_dir.mkdir(parents=True)
+
+        yield data_dir, db_path, person_id
+
+        close_db()
+
+    def _patch_db(self, setup_db):
+        """Return a context manager that patches DB calls to use the test DB."""
+        data_dir, db_path, person_id = setup_db
+        from engine.gateway.db import get_db, init_db
+        from functools import partial
+        return (
+            data_dir, db_path, person_id,
+            patch("mcp_server.tools._data_dir", return_value=data_dir),
+            patch("engine.gateway.db.get_db", side_effect=partial(get_db, db_path)),
+            patch("engine.gateway.db.init_db", side_effect=partial(init_db, db_path)),
+        )
+
+    def test_ingest_writes_to_wearable_daily(self, setup_db):
+        """A full ingest should create a row in wearable_daily."""
+        data_dir, db_path, person_id = setup_db
+        from engine.gateway.db import get_db
+
+        metrics = {
+            "resting_hr": 54.2,
+            "hrv_sdnn": 42.5,
+            "steps": 8450,
+            "sleep_hours": 7.1,
+            "sleep_start": "22:45",
+            "sleep_end": "06:10",
+            "vo2_max": 51.3,
+            "active_calories": 450,
+        }
+        with (
+            patch("mcp_server.tools._data_dir", return_value=data_dir),
+            patch("engine.gateway.db._db_path", return_value=db_path),
+        ):
+            result = _ingest_health_snapshot(
+                user_id="test_user",
+                metrics=metrics,
+                timestamp=_recent_ts(1),
+            )
+
+        assert result["ingested"] is True
+
+        db = get_db(db_path)
+        row = db.execute(
+            "SELECT * FROM wearable_daily WHERE person_id = ? AND source = 'apple_health'",
+            (person_id,),
+        ).fetchone()
+        assert row is not None, "Expected a wearable_daily row for apple_health source"
+        assert row["rhr"] == 54.2
+        assert row["hrv"] == 42.5
+        assert row["steps"] == 8450
+        assert row["sleep_hrs"] == 7.1
+        assert row["sleep_start"] == "22:45"
+        assert row["sleep_end"] == "06:10"
+        assert row["vo2_max"] == 51.3
+        assert row["calories_active"] == 450.0
+
+    def test_ingest_upserts_same_day(self, setup_db):
+        """Second ingest on same day should update, not duplicate."""
+        data_dir, db_path, person_id = setup_db
+        from engine.gateway.db import get_db
+
+        with (
+            patch("mcp_server.tools._data_dir", return_value=data_dir),
+            patch("engine.gateway.db._db_path", return_value=db_path),
+        ):
+            _ingest_health_snapshot(
+                user_id="test_user",
+                metrics={"resting_hr": 54.0, "steps": 8000},
+                timestamp=_recent_ts(12),
+            )
+            # Second ingest same day, different values
+            _ingest_health_snapshot(
+                user_id="test_user",
+                metrics={"resting_hr": 52.0, "steps": 9000},
+                timestamp=_recent_ts(1),
+            )
+
+        db = get_db(db_path)
+        rows = db.execute(
+            "SELECT * FROM wearable_daily WHERE person_id = ? AND source = 'apple_health'",
+            (person_id,),
+        ).fetchall()
+        assert len(rows) == 1, f"Expected 1 row (upsert), got {len(rows)}"
+        assert rows[0]["rhr"] == 52.0
+        assert rows[0]["steps"] == 9000
+
+    def test_ingest_no_person_no_crash(self, tmp_path):
+        """If user has no person row, ingest should still succeed (JSON only)."""
+        from engine.gateway.db import init_db, close_db
+        db_path = tmp_path / "kasane.db"
+        close_db()
+        init_db(db_path)
+
+        data_dir = tmp_path / "data" / "users" / "orphan"
+        data_dir.mkdir(parents=True)
+
+        with (
+            patch("mcp_server.tools._data_dir", return_value=data_dir),
+            patch("engine.gateway.db._db_path", return_value=db_path),
+        ):
+            result = _ingest_health_snapshot(
+                user_id="orphan",
+                metrics={"resting_hr": 60.0},
+                timestamp=_recent_ts(1),
+            )
+
+        assert result["ingested"] is True
+
+        close_db()

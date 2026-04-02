@@ -274,6 +274,7 @@ CREATE TABLE IF NOT EXISTS wearable_daily (
     min_hr INTEGER,
     vo2_max REAL,
     body_battery INTEGER,
+    zone2_min INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -347,7 +348,9 @@ CREATE TABLE IF NOT EXISTS program_day (
     name TEXT NOT NULL,
     day_type TEXT,
     notes TEXT,
-    sort_order INTEGER
+    sort_order INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS prescribed_exercise (
@@ -360,7 +363,9 @@ CREATE TABLE IF NOT EXISTS prescribed_exercise (
     rest_seconds INTEGER,
     notes TEXT,
     sort_order INTEGER,
-    category TEXT
+    category TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS conversation_message (
@@ -395,7 +400,7 @@ CREATE INDEX IF NOT EXISTS idx_meal_person_date ON meal_entry(person_id, date);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bp_person_date ON bp_entry(person_id, date);
 CREATE INDEX IF NOT EXISTS idx_session_person_date ON training_session(person_id, date);
 CREATE INDEX IF NOT EXISTS idx_strength_person_date ON strength_set(person_id, date);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wearable_person_date ON wearable_daily(person_id, date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wearable_person_date_source ON wearable_daily(person_id, date, source);
 CREATE INDEX IF NOT EXISTS idx_lab_draw_person ON lab_draw(person_id);
 CREATE INDEX IF NOT EXISTS idx_lab_result_person_marker ON lab_result(person_id, marker);
 CREATE INDEX IF NOT EXISTS idx_habit_log_person_date ON habit_log(person_id, date);
@@ -407,6 +412,18 @@ CREATE INDEX IF NOT EXISTS idx_prescribed_exercise_day ON prescribed_exercise(pr
 CREATE INDEX IF NOT EXISTS idx_convo_user ON conversation_message(user_id);
 CREATE INDEX IF NOT EXISTS idx_convo_timestamp ON conversation_message(timestamp);
 CREATE INDEX IF NOT EXISTS idx_convo_session ON conversation_message(session_key);
+
+-- Scheduled send dedup: prevents double-sends per user per schedule type per day
+CREATE TABLE IF NOT EXISTS scheduled_send (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id   TEXT NOT NULL,
+    schedule_type TEXT NOT NULL,  -- 'morning_brief', 'evening_checkin', 'weekly_review'
+    sent_date   TEXT NOT NULL,    -- YYYY-MM-DD in the user's local timezone
+    sent_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    status      TEXT NOT NULL DEFAULT 'sent',  -- 'sent', 'failed', 'dry_run'
+    message_preview TEXT,
+    UNIQUE(person_id, schedule_type, sent_date)
+);
 """
 
 
@@ -458,6 +475,36 @@ def _migrate(conn: sqlite3.Connection):
         dirty = True
     if "completed" not in ss_cols:
         conn.execute("ALTER TABLE strength_set ADD COLUMN completed INTEGER DEFAULT 1")
+        dirty = True
+
+    # wearable_daily: add zone2_min column and update unique index to include source
+    wd_cols = {row[1] for row in conn.execute("PRAGMA table_info(wearable_daily)").fetchall()}
+    if "zone2_min" not in wd_cols:
+        conn.execute("ALTER TABLE wearable_daily ADD COLUMN zone2_min INTEGER")
+        dirty = True
+
+    # Migrate unique index from (person_id, date) to (person_id, date, source)
+    idx_info = conn.execute("PRAGMA index_list(wearable_daily)").fetchall()
+    old_idx_exists = any(r[1] == "idx_wearable_person_date" for r in idx_info)
+    if old_idx_exists:
+        conn.execute("DROP INDEX idx_wearable_person_date")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_wearable_person_date_source "
+            "ON wearable_daily(person_id, date, source)"
+        )
+        dirty = True
+
+    # program_day / prescribed_exercise: add timestamp columns for sync
+    pd_cols = {row[1] for row in conn.execute("PRAGMA table_info(program_day)").fetchall()}
+    if "created_at" not in pd_cols:
+        conn.execute("ALTER TABLE program_day ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE program_day ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+        dirty = True
+
+    pe_cols = {row[1] for row in conn.execute("PRAGMA table_info(prescribed_exercise)").fetchall()}
+    if "created_at" not in pe_cols:
+        conn.execute("ALTER TABLE prescribed_exercise ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE prescribed_exercise ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
         dirty = True
 
     if dirty:
@@ -621,7 +668,7 @@ TABLE_COLUMNS = {
         "steps", "sleep_hrs", "deep_sleep_hrs", "light_sleep_hrs", "rem_sleep_hrs",
         "awake_hrs", "sleep_start", "sleep_end", "calories_total", "calories_active",
         "calories_bmr", "stress_avg", "floors", "distance_m", "max_hr", "min_hr",
-        "vo2_max", "body_battery",
+        "vo2_max", "body_battery", "zone2_min",
     ],
     "lab_draw": [
         "person_id", "date", "source", "notes",

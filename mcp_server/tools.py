@@ -2790,6 +2790,55 @@ def _ingest_health_snapshot(
         except Exception:
             pass
 
+    # --- Dual-write to wearable_daily SQLite ---
+    try:
+        import uuid as _uuid
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        person_row = db.execute(
+            "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (user_id,),
+        ).fetchone()
+        if person_row:
+            pid = person_row["id"]
+            snap_date = datetime.now().strftime("%Y-%m-%d")
+            now_iso = datetime.now().isoformat(timespec="seconds")
+            rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{pid}:wearable_daily:{snap_date}:apple_health"))
+
+            def _sf(v):
+                if v is None or v == "":
+                    return None
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+
+            def _si(v):
+                if v is None or v == "":
+                    return None
+                try:
+                    return int(float(v))
+                except (ValueError, TypeError):
+                    return None
+
+            db.execute(
+                "INSERT OR REPLACE INTO wearable_daily (id, person_id, date, source, "
+                "rhr, hrv, steps, sleep_hrs, sleep_start, sleep_end, "
+                "vo2_max, calories_active, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rid, pid, snap_date, "apple_health",
+                 _sf(clean.get("resting_hr")), _sf(clean.get("hrv_sdnn")),
+                 _si(clean.get("steps")), _sf(clean.get("sleep_hours")),
+                 clean.get("sleep_start"), clean.get("sleep_end"),
+                 _sf(clean.get("vo2_max")), _sf(clean.get("active_calories")),
+                 now_iso, now_iso),
+            )
+            db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("kiso.ingest").warning("wearable_daily SQLite write failed: %s", e)
+
     result = {
         "ingested": True,
         "user_id": user_id,
@@ -2883,7 +2932,10 @@ def _get_person_context(person_id: str | None = None, user_id: str | None = None
 
     # Wearable snapshot (SQLite for latest day, JSON fallback)
     wearable_row = db.execute(
-        "SELECT * FROM wearable_daily WHERE person_id = ? ORDER BY date DESC LIMIT 1", (pid,)
+        "SELECT * FROM wearable_daily WHERE person_id = ? "
+        "ORDER BY date DESC, "
+        "CASE source WHEN 'garmin' THEN 1 WHEN 'apple_health' THEN 2 ELSE 3 END "
+        "LIMIT 1", (pid,)
     ).fetchone()
     if wearable_row:
         health["wearable_snapshot"] = dict(wearable_row)

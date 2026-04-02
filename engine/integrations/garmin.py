@@ -741,7 +741,7 @@ class GarminClient:
                 init_db()
                 db = get_db()
                 now = datetime.now().isoformat(timespec="seconds")
-                rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:wearable_daily:{snap_date}"))
+                rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:wearable_daily:{snap_date}:garmin"))
 
                 def _sf(v):
                     """Safe float for SQLite."""
@@ -765,8 +765,9 @@ class GarminClient:
                     "rhr, hrv, hrv_weekly_avg, hrv_status, steps, sleep_hrs, deep_sleep_hrs, "
                     "light_sleep_hrs, rem_sleep_hrs, awake_hrs, sleep_start, sleep_end, "
                     "calories_total, calories_active, calories_bmr, stress_avg, floors, "
-                    "distance_m, max_hr, min_hr, vo2_max, body_battery, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "distance_m, max_hr, min_hr, vo2_max, body_battery, zone2_min, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (rid, person_id, snap_date, "garmin",
                      _sf(snapshot.get("rhr")), _sf(snapshot.get("hrv")),
                      _sf(snapshot.get("hrv_weekly_avg")), snapshot.get("hrv_status"),
@@ -779,6 +780,7 @@ class GarminClient:
                      _sf(snapshot.get("floors")), _sf(snapshot.get("distance_m")),
                      _si(snapshot.get("max_hr")), _si(snapshot.get("min_hr")),
                      _sf(snapshot.get("vo2_max")), _si(snapshot.get("body_battery")),
+                     _si(snapshot.get("zone2_min")),
                      now, now),
                 )
                 db.commit()
@@ -879,6 +881,25 @@ class GarminClient:
 
         # Zone 2 (from activities, 1 API call)
         zone2 = self.pull_zone2_minutes()
+
+        # Update today's wearable_daily row with vo2_max and zone2_min
+        # (these are computed after _append_to_daily_series, so patch them in)
+        if person_id and (vo2 is not None or zone2 is not None):
+            try:
+                from engine.gateway.db import get_db, init_db
+                init_db()
+                db = get_db()
+                db.execute(
+                    "UPDATE wearable_daily SET vo2_max = COALESCE(?, vo2_max), "
+                    "zone2_min = COALESCE(?, zone2_min), "
+                    "updated_at = ? "
+                    "WHERE person_id = ? AND date = ? AND source = 'garmin'",
+                    (vo2, zone2, datetime.now().isoformat(timespec="seconds"),
+                     person_id, today_str),
+                )
+                db.commit()
+            except Exception as e:
+                print(f"  SQLite vo2/zone2 update error: {e}", file=sys.stderr)
 
         # Compute averages from local series
         avgs = self._compute_averages(series)

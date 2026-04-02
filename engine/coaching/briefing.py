@@ -888,8 +888,16 @@ def _load_wearable_daily_sqlite(person_id: str | None) -> Optional[list]:
         init_db()
         db = get_db()
         rows = db.execute(
-            "SELECT * FROM wearable_daily WHERE person_id = ? ORDER BY date",
-            (person_id,),
+            "SELECT * FROM wearable_daily WHERE person_id = ? "
+            "AND id IN ("
+            "  SELECT id FROM ("
+            "    SELECT id, ROW_NUMBER() OVER ("
+            "      PARTITION BY date "
+            "      ORDER BY CASE source WHEN 'garmin' THEN 1 WHEN 'apple_health' THEN 2 ELSE 3 END"
+            "    ) AS rn FROM wearable_daily WHERE person_id = ?"
+            "  ) WHERE rn = 1"
+            ") ORDER BY date",
+            (person_id, person_id),
         ).fetchall()
         if not rows:
             return None

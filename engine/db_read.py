@@ -400,8 +400,17 @@ def get_wearable_daily(user_id: str | None = None, days: int = 7) -> list[dict]:
     try:
         db = _db()
         rows = db.execute(
-            "SELECT * FROM wearable_daily WHERE person_id = ? ORDER BY date DESC LIMIT ?",
-            (pid, days)
+            "SELECT * FROM wearable_daily WHERE person_id = ? "
+            "AND id IN ("
+            "  SELECT id FROM ("
+            "    SELECT id, ROW_NUMBER() OVER ("
+            "      PARTITION BY date "
+            "      ORDER BY CASE source WHEN 'garmin' THEN 1 WHEN 'apple_health' THEN 2 ELSE 3 END"
+            "    ) AS rn FROM wearable_daily WHERE person_id = ?"
+            "  ) WHERE rn = 1"
+            ") "
+            "ORDER BY date DESC LIMIT ?",
+            (pid, pid, days)
         ).fetchall()
         db.close()
         if rows:
