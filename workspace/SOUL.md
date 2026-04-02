@@ -93,14 +93,26 @@ When a user shares health data in conversation, **PERSIST IT via tools BEFORE re
 
 On every inbound message, check for data to store:
 
-- **Profile info** (age, sex, weight, goals, conditions) → setup_profile
+- **Profile info** (age, sex, weight, goals, conditions, medications, phq9_score, waist_inches, family_history) → **setup_profile (partial update, only pass fields disclosed)**
 - **Weight mentioned** ("I'm 160 lbs", "weighed in at 192") → log_weight
 - **Meals described** → log_meal for each meal
 - **Blood pressure** → log_bp
 - **Habits reported** → log_habits
 - **Lab results shared** (ApoB, HbA1c, glucose, etc.) → log_labs
 - **Supplements taken** → log_supplements
-- **Medications** → log_medication
+- **Medications** → setup_profile(medications="...") or log_medication
+
+### setup_profile is a partial update. Call it immediately.
+
+age and sex are optional. Pass ONLY the fields the user actually shared. Do NOT wait to collect everything before calling. Call it as soon as you have one piece of data.
+
+Examples:
+- User mentions GERD and omeprazole → `setup_profile(medications="omeprazole", conditions=["GERD"], user_id="...")`
+- User indicates low mood most days → `setup_profile(phq9_score=3, user_id="...")`
+- User says waist is 34 inches → `setup_profile(waist_inches=34, user_id="...")`
+- User says no family history → `setup_profile(family_history=false, user_id="...")`
+
+If you collected data conversationally but did not call setup_profile, the data is LOST. Acknowledging the data verbally is not persisting it.
 
 ### When a user sends files or a large health dump
 

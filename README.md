@@ -10,9 +10,9 @@ The name means "foundation" in Japanese. Kasane means "layers." Kiso is what the
 
 **For the iOS app**: bidirectional sync of persons, habits, check-ins, focus plans, and health measurements via REST API.
 
-**For Milo**: 40+ MCP tools for health coaching. Log weight, meals, labs, blood pressure. Pull data from Garmin, Apple Health, Oura, Whoop. Score 20 health metrics against NHANES population percentiles and clinical guidelines.
+**For Milo**: 52 MCP tools for health coaching. Log weight, meals, labs, blood pressure. Pull data from Garmin, Apple Health, Oura, Whoop. Score 20 health metrics against NHANES population percentiles and clinical guidelines.
 
-**For both**: a unified person context that merges Kasane data (SQLite) with health tracking data (CSVs) in one call.
+**For both**: a unified person context that merges all data sources in one call.
 
 ## Quick start
 
@@ -57,9 +57,9 @@ Full API reference: [docs/API.md](docs/API.md)
 
 One Python process. Two storage systems. Three clients.
 
-- **SQLite** (`data/kasane.db`): persons, habits, check-ins, focus plans. Synced with iOS.
-- **CSVs** (`data/`): weight, meals, labs, Garmin, supplements. Written by Milo's tools.
-- **Bridge**: `person.health_engine_user_id` links a SQLite person to a CSV data directory.
+- **SQLite** (`data/kasane.db`): persons, habits, check-ins, focus plans, wearable daily metrics, labs, meals, weight, training. Synced with iOS and wearable integrations.
+- **CSVs** (`data/`): legacy weight, meals, labs, supplements. Being migrated to SQLite.
+- **Bridge**: `person.health_engine_user_id` links a SQLite person to a per-user data directory.
 
 Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -81,7 +81,7 @@ Full methodology: [docs/METHODOLOGY.md](docs/METHODOLOGY.md)
 | [METHODOLOGY.md](docs/METHODOLOGY.md) | Why each metric, evidence sources, clinical thresholds |
 | [SCORING.md](docs/SCORING.md) | How the scoring engine works |
 | [METRICS.md](docs/METRICS.md) | 20-metric catalog |
-| [DATA_FORMATS.md](docs/DATA_FORMATS.md) | CSV/JSON schemas |
+| [DATA_FORMATS.md](docs/DATA_FORMATS.md) | CSV/JSON/SQLite schemas |
 | [ONBOARDING.md](docs/ONBOARDING.md) | Setup walkthrough |
 
 ## License

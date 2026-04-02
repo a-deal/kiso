@@ -12,17 +12,19 @@ Kiso is a monolithic Python backend serving three clients from one process.
 
 ## Storage: Two Systems, One Bridge
 
-**SQLite** (`data/kasane.db`) holds relational Kasane entities:
+**SQLite** (`data/kasane.db`) is the primary data store:
 - Persons, habits, check-ins, focus plans, messages, health measurements, workout records
+- `wearable_daily` table: unified daily metrics from all wearable sources (Garmin, Oura, Whoop, Apple Health) with source priority dedup
+- Lab draws, training sessions, workout programs, conversation messages, scheduled sends
 - Synced bidirectionally with the iOS app via `/api/v1/sync`
 - WAL mode for concurrent reads
 
-**CSVs** (`data/` flat files) hold health tracking data:
+**CSVs** (`data/` flat files) are legacy storage, being migrated to SQLite:
 - Weight, meals, labs, blood pressure, supplements, medications, habits
-- Written by Milo's 40+ MCP tools
 - Per-user directories at `data/users/<user_id>/`
+- All readers now query SQLite first with CSV fallback
 
-**The bridge**: `person.health_engine_user_id` links a SQLite person to a CSV user directory. The `get_person_context` tool reads both in one call.
+**The bridge**: `person.health_engine_user_id` links a SQLite person to a per-user data directory. The `get_person_context` tool reads both in one call.
 
 ## Request Flow
 
@@ -87,12 +89,12 @@ engine/
 
 mcp_server/
   server.py        FastMCP entry point
-  tools.py         40+ tool implementations + registry
+  tools.py         52 tool implementations + registry
 
 workspace/         Milo agent files (deployed to Mac Mini)
 data/              Local-first storage (gitignored)
 scripts/           Admin + seed scripts
-tests/             400+ tests
+tests/             592+ tests
 docs/              This directory
 ```
 

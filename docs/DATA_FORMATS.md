@@ -37,7 +37,58 @@ date,habit,completed
 2026-01-23,sleep_by_11,no
 ```
 
-## JSON Schemas
+## SQLite Tables
+
+### wearable_daily
+
+Unified daily wearable metrics from all sources. One row per person per date per source.
+All readers query this table first, falling back to JSON files if no data found.
+When multiple sources exist for the same date, garmin is preferred, then apple_health, then others.
+
+```sql
+CREATE TABLE wearable_daily (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,              -- YYYY-MM-DD
+    source TEXT,                     -- garmin, apple_health, oura, whoop
+    rhr REAL,                        -- resting heart rate (bpm)
+    hrv REAL,                        -- HRV RMSSD (ms)
+    hrv_weekly_avg REAL,
+    hrv_status TEXT,                 -- balanced, low, etc.
+    steps INTEGER,
+    sleep_hrs REAL,                  -- total sleep duration
+    deep_sleep_hrs REAL,
+    light_sleep_hrs REAL,
+    rem_sleep_hrs REAL,
+    awake_hrs REAL,
+    sleep_start TEXT,                -- HH:MM
+    sleep_end TEXT,                  -- HH:MM
+    calories_total REAL,
+    calories_active REAL,
+    calories_bmr REAL,
+    stress_avg INTEGER,
+    floors REAL,
+    distance_m REAL,
+    max_hr INTEGER,
+    min_hr INTEGER,
+    vo2_max REAL,
+    body_battery INTEGER,
+    zone2_min INTEGER,               -- minutes of zone 2 cardio
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_wearable_daily_unique ON wearable_daily(person_id, date, source);
+```
+
+**Source priority for dedup queries:**
+```sql
+ROW_NUMBER() OVER (
+    PARTITION BY date
+    ORDER BY CASE source WHEN 'garmin' THEN 1 WHEN 'apple_health' THEN 2 ELSE 3 END
+) AS rn
+```
+
+## JSON Schemas (legacy, being migrated to SQLite)
 
 ### garmin_latest.json
 ```json

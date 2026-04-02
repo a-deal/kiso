@@ -72,7 +72,7 @@
 
 ## Tier 2: Enhanced
 
-### VO2 Max (Weight: 5)
+### VO2 Max (Weight: 6)
 - **Evidence**: Strongest modifiable predictor of all-cause mortality (JACC 2018)
 - **Scoring**: ACSM fitness classifications by age/sex
 
