@@ -1627,7 +1627,8 @@ def _pull_oura(history: bool = False, user_id: str | None = None) -> dict:
             user_id=uid,
             data_dir=data_dir_path,
         )
-        result = client.pull_all(history=history, history_days=90)
+        person_id = _resolve_person_id(uid)
+        result = client.pull_all(history=history, history_days=90, person_id=person_id)
 
         # Rebuild briefing
         if uid and uid != "default":
@@ -1726,7 +1727,8 @@ def _pull_whoop(history: bool = False, user_id: str | None = None) -> dict:
             user_id=uid,
             data_dir=data_dir_path,
         )
-        result = client.pull_all(history=history, history_days=90)
+        person_id = _resolve_person_id(uid)
+        result = client.pull_all(history=history, history_days=90, person_id=person_id)
 
         # Rebuild briefing
         if uid and uid != "default":
@@ -2096,14 +2098,17 @@ def _setup_profile(
     data_dir.mkdir(parents=True, exist_ok=True)
 
     # Rebuild briefing so dashboard reflects changes immediately
+    briefing_refreshed = False
     try:
+        briefing_config = dict(config)
+        briefing_config["data_dir"] = str(data_dir)
         from engine.coaching.briefing import build_briefing
-        briefing = build_briefing(config)
+        briefing = build_briefing(briefing_config)
         with open(data_dir / "briefing.json", "w") as f:
             json.dump(briefing, f, indent=2, default=str)
         briefing_refreshed = True
     except Exception:
-        briefing_refreshed = False
+        pass
 
     return {
         "saved": True,
@@ -2304,6 +2309,7 @@ def _log_labs(
     briefing_refreshed = False
     try:
         _cfg = _load_config(user_id)
+        _cfg["data_dir"] = str(data_dir)
         from engine.coaching.briefing import build_briefing
         briefing = build_briefing(_cfg)
         with open(data_dir / "briefing.json", "w") as f:
@@ -2941,6 +2947,7 @@ def _ingest_health_snapshot(
     briefing_refreshed = False
     try:
         _cfg = _load_config(user_id)
+        _cfg["data_dir"] = str(data_dir)
         from engine.coaching.briefing import build_briefing
         briefing = build_briefing(_cfg)
         with open(data_dir / "briefing.json", "w") as f:
