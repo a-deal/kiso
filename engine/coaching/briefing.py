@@ -87,37 +87,70 @@ def build_briefing(config: dict) -> dict:
         "data_available": {},
     }
 
-    # --- Wearable data (priority: garmin > oura > whoop > apple_health) ---
-    garmin = _load_json(data_dir / "garmin_latest.json")
-    oura = _load_json(data_dir / "oura_latest.json")
-    whoop = _load_json(data_dir / "whoop_latest.json")
-    apple_health = _load_json(data_dir / "apple_health_latest.json")
+    # --- Wearable data (SQLite first, JSON fallback) ---
+    from mcp_server.tools import _load_wearable_averages_sqlite
+    wearable = _load_wearable_averages_sqlite(_person_id)
+    wearable_source = None
+    if wearable:
+        # Determine source from latest wearable_daily row
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            _src_row = get_db().execute(
+                "SELECT source FROM wearable_daily WHERE person_id = ? "
+                "ORDER BY date DESC LIMIT 1", (_person_id,)
+            ).fetchone()
+            wearable_source = _src_row["source"] if _src_row else "garmin"
+        except Exception:
+            wearable_source = "garmin"
+    else:
+        # JSON fallback for users not yet in wearable_daily
+        garmin = _load_json(data_dir / "garmin_latest.json")
+        oura = _load_json(data_dir / "oura_latest.json")
+        whoop = _load_json(data_dir / "whoop_latest.json")
+        apple_health = _load_json(data_dir / "apple_health_latest.json")
+        wearable = garmin or oura or whoop or apple_health
+        if garmin: wearable_source = "garmin"
+        elif oura: wearable_source = "oura"
+        elif whoop: wearable_source = "whoop"
+        elif apple_health: wearable_source = "apple_health"
+
     garmin_daily = _load_wearable_daily_sqlite(_person_id) or _load_json(data_dir / "garmin_daily.json")
     oura_daily = _load_json(data_dir / "oura_daily.json")
     whoop_daily = _load_json(data_dir / "whoop_daily.json")
-    briefing["data_available"]["garmin"] = garmin is not None
-    briefing["data_available"]["oura"] = oura is not None
-    briefing["data_available"]["whoop"] = whoop is not None
-    briefing["data_available"]["apple_health"] = apple_health is not None
+    briefing["data_available"]["garmin"] = wearable is not None and wearable_source == "garmin"
+    briefing["data_available"]["oura"] = wearable_source == "oura"
+    briefing["data_available"]["whoop"] = wearable_source == "whoop"
+    briefing["data_available"]["apple_health"] = wearable_source == "apple_health"
     briefing["data_available"]["garmin_daily"] = garmin_daily is not None
     briefing["data_available"]["oura_daily"] = oura_daily is not None
     briefing["data_available"]["whoop_daily"] = whoop_daily is not None
 
-    # Use Garmin if available, then Oura, then WHOOP, then Apple Health
-    wearable = garmin or oura or whoop or apple_health
-    if garmin:
-        wearable_source = "garmin"
-    elif oura:
-        wearable_source = "oura"
-    elif whoop:
-        wearable_source = "whoop"
-    elif apple_health:
-        wearable_source = "apple_health"
-    else:
-        wearable_source = None
-
-    # --- Daily burn (Garmin TDEE data) ---
-    daily_burn = _load_json(data_dir / "garmin_daily_burn.json")
+    # --- Daily burn (SQLite first, JSON fallback) ---
+    daily_burn = None
+    if _person_id:
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            _burn_rows = get_db().execute(
+                "SELECT date, calories_total as total, calories_active as active, calories_bmr as bmr "
+                "FROM wearable_daily WHERE person_id = ? AND calories_total IS NOT NULL "
+                "AND id IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, ROW_NUMBER() OVER ("
+                "      PARTITION BY date "
+                "      ORDER BY CASE source WHEN 'garmin' THEN 1 WHEN 'apple_health' THEN 2 ELSE 3 END"
+                "    ) AS rn FROM wearable_daily WHERE person_id = ?"
+                "  ) WHERE rn = 1"
+                ") ORDER BY date DESC LIMIT 7",
+                (_person_id, _person_id),
+            ).fetchall()
+            if _burn_rows:
+                daily_burn = [dict(r) for r in _burn_rows]
+        except Exception:
+            pass
+    if daily_burn is None:
+        daily_burn = _load_json(data_dir / "garmin_daily_burn.json")
     briefing["data_available"]["garmin_daily_burn"] = daily_burn is not None
 
     if wearable:
@@ -242,18 +275,43 @@ def build_briefing(config: dict) -> dict:
             for key in ("resting_hr", "daily_steps_avg", "sleep_regularity_stddev",
                         "sleep_duration_avg", "vo2_max", "hrv_rmssd_avg", "zone2_min_per_week"):
                 metric_dates[key] = wearable_date
-    if bp_data_for_score:
-        bp_rows_raw = read_csv(data_dir / "bp_log.csv")
-        if bp_rows_raw:
-            metric_dates["bp_single"] = bp_rows_raw[-1].get("date", "")
-            metric_dates["bp_protocol"] = bp_rows_raw[-1].get("date", "")
-            # Count BP readings in last 7 days
-            bp_count = _count_recent_readings(bp_rows_raw, 7)
-            metric_counts["bp"] = bp_count
-    if weights_for_score:
-        weight_rows_raw = read_csv(data_dir / "weight_log.csv")
-        if weight_rows_raw:
-            metric_dates["weight_lbs"] = weight_rows_raw[-1].get("date", "")
+    if bp_data_for_score and _person_id:
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            _bp_latest = get_db().execute(
+                "SELECT date FROM bp_entry WHERE person_id = ? AND deleted_at IS NULL ORDER BY date DESC LIMIT 1",
+                (_person_id,),
+            ).fetchone()
+            if _bp_latest:
+                metric_dates["bp_single"] = _bp_latest["date"]
+                metric_dates["bp_protocol"] = _bp_latest["date"]
+            _bp_7d = get_db().execute(
+                "SELECT COUNT(*) as cnt FROM bp_entry WHERE person_id = ? AND deleted_at IS NULL AND date >= date('now', '-7 days')",
+                (_person_id,),
+            ).fetchone()
+            metric_counts["bp"] = _bp_7d["cnt"] if _bp_7d else 0
+        except Exception:
+            bp_rows_raw = read_csv(data_dir / "bp_log.csv")
+            if bp_rows_raw:
+                metric_dates["bp_single"] = bp_rows_raw[-1].get("date", "")
+                metric_dates["bp_protocol"] = bp_rows_raw[-1].get("date", "")
+                bp_count = _count_recent_readings(bp_rows_raw, 7)
+                metric_counts["bp"] = bp_count
+    if weights_for_score and _person_id:
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            _wt_latest = get_db().execute(
+                "SELECT date FROM weight_entry WHERE person_id = ? AND deleted_at IS NULL ORDER BY date DESC LIMIT 1",
+                (_person_id,),
+            ).fetchone()
+            if _wt_latest:
+                metric_dates["weight_lbs"] = _wt_latest["date"]
+        except Exception:
+            weight_rows_raw = read_csv(data_dir / "weight_log.csv")
+            if weight_rows_raw:
+                metric_dates["weight_lbs"] = weight_rows_raw[-1].get("date", "")
 
     score_output = score_profile(profile, metric_dates=metric_dates,
                                  metric_counts=metric_counts)
@@ -749,22 +807,36 @@ def build_briefing(config: dict) -> dict:
     has_wearable = any(w in equipment for w in ['garmin', 'oura', 'whoop', 'apple_watch']) or briefing.get('wearable_source')
 
     # Blood pressure: 7-day series monthly (AHA standard)
-    bp_rows_raw = read_csv(data_dir / 'bp_log.csv')
-    if bp_rows_raw:
-        last_bp_date = bp_rows_raw[-1].get('date', '')
-        if last_bp_date:
-            try:
-                days_since_bp = (today_dt - datetime.strptime(last_bp_date, '%Y-%m-%d')).days
-                if days_since_bp >= 28:
-                    measurement_prompts.append({
-                        'metric': 'blood_pressure',
-                        'action': 'Start your monthly 7-day BP series. Take a morning reading before coffee, seated 5 min. Log daily for 7 days. The average of 7 readings is your real number.',
-                        'last_measured': last_bp_date,
-                        'days_since': days_since_bp,
-                        'schedule': 'monthly (7-day series)',
-                    })
-            except ValueError:
-                pass
+    last_bp_date = None
+    if _person_id:
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            _bp_row = get_db().execute(
+                "SELECT date FROM bp_entry WHERE person_id = ? AND deleted_at IS NULL ORDER BY date DESC LIMIT 1",
+                (_person_id,),
+            ).fetchone()
+            if _bp_row:
+                last_bp_date = _bp_row["date"]
+        except Exception:
+            pass
+    if not last_bp_date:
+        bp_rows_raw = read_csv(data_dir / 'bp_log.csv')
+        if bp_rows_raw:
+            last_bp_date = bp_rows_raw[-1].get('date', '')
+    if last_bp_date:
+        try:
+            days_since_bp = (today_dt - datetime.strptime(last_bp_date, '%Y-%m-%d')).days
+            if days_since_bp >= 28:
+                measurement_prompts.append({
+                    'metric': 'blood_pressure',
+                    'action': 'Start your monthly 7-day BP series. Take a morning reading before coffee, seated 5 min. Log daily for 7 days. The average of 7 readings is your real number.',
+                    'last_measured': last_bp_date,
+                    'days_since': days_since_bp,
+                    'schedule': 'monthly (7-day series)',
+                })
+        except ValueError:
+            pass
     elif has_bp_monitor:
         measurement_prompts.append({
             'metric': 'blood_pressure',
@@ -782,22 +854,36 @@ def build_briefing(config: dict) -> dict:
         })
 
     # Weight: daily weigh-in
-    weight_rows = read_csv(data_dir / 'weight_log.csv')
-    if weight_rows:
-        last_weight_date = weight_rows[-1].get('date', '')
-        if last_weight_date:
-            try:
-                days_since_weight = (today_dt - datetime.strptime(last_weight_date, '%Y-%m-%d')).days
-                if days_since_weight >= 3:
-                    measurement_prompts.append({
-                        'metric': 'weight',
-                        'action': f'No weigh-in for {days_since_weight} days. Daily weighing gives the 7-day rolling average that shows real trends. Step on the scale tomorrow morning, before eating.',
-                        'last_measured': last_weight_date,
-                        'days_since': days_since_weight,
-                        'schedule': 'daily',
-                    })
-            except ValueError:
-                pass
+    last_weight_date = None
+    if _person_id:
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            _wt_row = get_db().execute(
+                "SELECT date FROM weight_entry WHERE person_id = ? AND deleted_at IS NULL ORDER BY date DESC LIMIT 1",
+                (_person_id,),
+            ).fetchone()
+            if _wt_row:
+                last_weight_date = _wt_row["date"]
+        except Exception:
+            pass
+    if not last_weight_date:
+        weight_rows = read_csv(data_dir / 'weight_log.csv')
+        if weight_rows:
+            last_weight_date = weight_rows[-1].get('date', '')
+    if last_weight_date:
+        try:
+            days_since_weight = (today_dt - datetime.strptime(last_weight_date, '%Y-%m-%d')).days
+            if days_since_weight >= 3:
+                measurement_prompts.append({
+                    'metric': 'weight',
+                    'action': f'No weigh-in for {days_since_weight} days. Daily weighing gives the 7-day rolling average that shows real trends. Step on the scale tomorrow morning, before eating.',
+                    'last_measured': last_weight_date,
+                    'days_since': days_since_weight,
+                    'schedule': 'daily',
+                })
+        except ValueError:
+            pass
     elif has_scale:
         measurement_prompts.append({
             'metric': 'weight',

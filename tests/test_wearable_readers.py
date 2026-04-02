@@ -222,3 +222,156 @@ class TestPersonContextNoJsonFallback:
         assert row is not None
         assert row["source"] == "garmin"
         assert row["rhr"] == 48.0
+
+
+# --- Briefing SQLite migration tests ---
+
+@pytest.fixture
+def briefing_db(tmp_path):
+    """DB with wearable, BP, weight, and training data for briefing tests."""
+    from engine.gateway.db import init_db, get_db, close_db
+    close_db()
+    db_path = tmp_path / "kasane.db"
+    init_db(db_path)
+    conn = get_db(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn.execute(
+        "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("p1", "Andrew", "andrew", now, now),
+    )
+
+    # Wearable data: 7 days with calories
+    for i in range(7):
+        d = f"2026-04-{i+1:02d}"
+        conn.execute(
+            "INSERT INTO wearable_daily "
+            "(id, person_id, date, source, rhr, hrv, steps, sleep_hrs, "
+            "sleep_start, vo2_max, zone2_min, "
+            "calories_total, calories_active, calories_bmr, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"w{i}", "p1", d, "garmin", 48.0, 62.0, 9500, 7.5,
+             "22:30", 47.0, 20,
+             2400, 600, 1800, now, now),
+        )
+
+    # BP entries
+    conn.execute(
+        "INSERT INTO bp_entry (id, person_id, date, systolic, diastolic, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("bp1", "p1", "2026-03-15", 112.0, 65.0, now, now),
+    )
+
+    # Weight entries
+    conn.execute(
+        "INSERT INTO weight_entry (id, person_id, date, weight_lbs, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("wt1", "p1", "2026-04-01", 192.5, now, now),
+    )
+
+    # Training session
+    conn.execute(
+        "INSERT INTO training_session (id, person_id, date, type, duration_min, notes, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("ts1", "p1", "2026-04-01", "strength", 60, "Upper push", now, now),
+    )
+
+    conn.commit()
+    yield conn, db_path, tmp_path
+    close_db()
+
+
+class TestBriefingUsesWearableSqlite:
+    """Briefing wearable profile should come from SQLite, not *_latest.json."""
+
+    def test_briefing_wearable_from_sqlite(self, briefing_db):
+        """Briefing should populate wearable data even when no JSON files exist."""
+        conn, db_path, tmp_path = briefing_db
+        data_dir = tmp_path / "data" / "users" / "andrew"
+        data_dir.mkdir(parents=True)
+        # No garmin_latest.json, no apple_health_latest.json — only SQLite
+
+        from mcp_server.tools import _load_wearable_averages_sqlite
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            avgs = _load_wearable_averages_sqlite("p1")
+
+        assert avgs is not None
+        assert avgs["resting_hr"] == 48.0
+        assert avgs["daily_steps_avg"] == 9500.0
+        assert avgs["hrv_rmssd_avg"] == 62.0
+        assert avgs["vo2_max"] == 47.0
+
+
+class TestBriefingBpFromSqlite:
+    """Briefing BP date should come from SQLite, not read_csv(bp_log.csv)."""
+
+    def test_latest_bp_date_from_sqlite(self, briefing_db):
+        """Should get the last BP date from bp_entry table."""
+        conn, db_path, tmp_path = briefing_db
+
+        row = conn.execute(
+            "SELECT date FROM bp_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            ("p1",),
+        ).fetchone()
+        assert row is not None
+        assert row["date"] == "2026-03-15"
+
+    def test_bp_count_from_sqlite(self, briefing_db):
+        """Should count recent BP readings from SQLite."""
+        conn, db_path, tmp_path = briefing_db
+
+        count = conn.execute(
+            "SELECT COUNT(*) as cnt FROM bp_entry WHERE person_id = ? AND date >= ?",
+            ("p1", "2026-03-01"),
+        ).fetchone()["cnt"]
+        assert count == 1
+
+
+class TestBriefingWeightFromSqlite:
+    """Briefing weight date should come from SQLite, not read_csv(weight_log.csv)."""
+
+    def test_latest_weight_date_from_sqlite(self, briefing_db):
+        """Should get the last weight date from weight_entry table."""
+        conn, db_path, tmp_path = briefing_db
+
+        row = conn.execute(
+            "SELECT date FROM weight_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            ("p1",),
+        ).fetchone()
+        assert row is not None
+        assert row["date"] == "2026-04-01"
+
+
+class TestBriefingBurnFromSqlite:
+    """Briefing calorie burn should come from wearable_daily, not garmin_daily_burn.json."""
+
+    def test_burn_data_from_sqlite(self, briefing_db):
+        """Should get calorie data from wearable_daily table."""
+        conn, db_path, tmp_path = briefing_db
+
+        rows = conn.execute(
+            "SELECT date, calories_total, calories_active, calories_bmr "
+            "FROM wearable_daily WHERE person_id = ? AND calories_total IS NOT NULL "
+            "ORDER BY date DESC LIMIT 7",
+            ("p1",),
+        ).fetchall()
+        assert len(rows) == 7
+        assert rows[0]["calories_total"] == 2400
+
+
+class TestBriefingTrainingFromSqlite:
+    """Briefing training sessions should come from SQLite, not session_log.csv."""
+
+    def test_sessions_from_sqlite(self, briefing_db):
+        """Should get training sessions from training_session table."""
+        conn, db_path, tmp_path = briefing_db
+
+        rows = conn.execute(
+            "SELECT * FROM training_session WHERE person_id = ? ORDER BY date DESC",
+            ("p1",),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["type"] == "strength"
+        assert rows[0]["duration_min"] == 60
