@@ -225,3 +225,163 @@ class TestGarminSqliteWrite:
         ).fetchone()
         assert row is not None
         assert row["zone2_min"] == 145
+
+
+# --- Backfill tests ---
+
+class TestBackfillVo2Zone2:
+    """Verify backfill_vo2_zone2 forward-fills NULL vo2_max from latest known value."""
+
+    def _setup_db_with_rows(self, tmp_path, rows):
+        """Create wearable_daily rows. Each row is (date, vo2_max, zone2_min)."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        db = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p-andrew", "Andrew", "andrew", now, now),
+        )
+        for i, (d, vo2, z2) in enumerate(rows):
+            db.execute(
+                "INSERT INTO wearable_daily (id, person_id, date, source, vo2_max, zone2_min, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"w{i}", "p-andrew", d, "garmin", vo2, z2, now, now),
+            )
+        db.commit()
+        return db_path
+
+    def test_forward_fills_null_vo2_max(self, tmp_path):
+        """Rows with NULL vo2_max should get the latest known value."""
+        rows = [
+            ("2026-03-30", None, None),
+            ("2026-03-31", None, None),
+            ("2026-04-01", None, None),
+            ("2026-04-02", 47.0, 152),  # today has values
+        ]
+        db_path = self._setup_db_with_rows(tmp_path, rows)
+        from engine.gateway.db import get_db
+
+        client = GarminClient(data_dir=str(tmp_path / "data"))
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            updated = client.backfill_vo2_zone2(person_id="p-andrew")
+
+        db = get_db(db_path)
+        results = db.execute(
+            "SELECT date, vo2_max FROM wearable_daily WHERE person_id = 'p-andrew' ORDER BY date"
+        ).fetchall()
+        for row in results:
+            assert row["vo2_max"] == 47.0, f"date {row['date']} has vo2_max={row['vo2_max']}, expected 47.0"
+        assert updated == 3  # 3 rows were updated
+
+    def test_does_not_overwrite_existing_vo2(self, tmp_path):
+        """Rows that already have vo2_max should keep their value."""
+        rows = [
+            ("2026-03-30", 45.0, None),  # different historical value
+            ("2026-04-02", 47.0, 152),
+        ]
+        db_path = self._setup_db_with_rows(tmp_path, rows)
+        from engine.gateway.db import get_db
+
+        client = GarminClient(data_dir=str(tmp_path / "data"))
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            updated = client.backfill_vo2_zone2(person_id="p-andrew")
+
+        db = get_db(db_path)
+        row = db.execute(
+            "SELECT vo2_max FROM wearable_daily WHERE date = '2026-03-30'"
+        ).fetchone()
+        assert row["vo2_max"] == 45.0  # preserved, not overwritten
+        assert updated == 0  # nothing to update
+
+    def test_no_known_vo2_returns_zero(self, tmp_path):
+        """If all rows have NULL vo2_max, nothing to forward-fill."""
+        rows = [
+            ("2026-03-30", None, None),
+            ("2026-03-31", None, None),
+        ]
+        db_path = self._setup_db_with_rows(tmp_path, rows)
+
+        client = GarminClient(data_dir=str(tmp_path / "data"))
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            updated = client.backfill_vo2_zone2(person_id="p-andrew")
+
+        assert updated == 0
+
+    def test_only_updates_garmin_source(self, tmp_path):
+        """Should not touch apple_health rows."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        db = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "INSERT INTO person (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("p1", "Test", now, now),
+        )
+        db.execute(
+            "INSERT INTO wearable_daily (id, person_id, date, source, vo2_max, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("w1", "p1", "2026-04-02", "garmin", 47.0, now, now),
+        )
+        db.execute(
+            "INSERT INTO wearable_daily (id, person_id, date, source, vo2_max, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("w2", "p1", "2026-04-01", "apple_health", None, now, now),
+        )
+        db.commit()
+
+        client = GarminClient(data_dir=str(tmp_path / "data"))
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            client.backfill_vo2_zone2(person_id="p1")
+
+        row = db.execute(
+            "SELECT vo2_max FROM wearable_daily WHERE id = 'w2'"
+        ).fetchone()
+        assert row["vo2_max"] is None  # apple_health row untouched
+
+
+class TestPullAllHistoryBackfill:
+    """Verify pull_all(history=True) calls backfill_vo2_zone2 after backfill."""
+
+    def test_history_backfill_calls_vo2_forward_fill(self, tmp_path):
+        """pull_all(history=True) should call backfill_vo2_zone2 after the loop."""
+        data_dir = tmp_path / "data" / "users" / "andrew"
+        data_dir.mkdir(parents=True)
+        client = GarminClient(data_dir=str(data_dir))
+
+        fake_snapshot = {
+            "date": None, "rhr": 48.0, "hrv": 62.0, "steps": 9500,
+            "sleep_hrs": 7.5, "vo2_max": None, "zone2_min": None,
+            "deep_sleep_hrs": None, "light_sleep_hrs": None,
+            "rem_sleep_hrs": None, "awake_hrs": None,
+            "sleep_start": None, "sleep_end": None,
+            "hrv_weekly_avg": None, "hrv_status": None,
+            "calories_total": None, "calories_active": None,
+            "calories_bmr": None, "stress_avg": None,
+            "floors": None, "distance_m": None,
+            "max_hr": None, "min_hr": None,
+        }
+
+        def mock_pull_day(d):
+            s = dict(fake_snapshot)
+            s["date"] = d
+            return s
+
+        mock_garmin = type("MockGarmin", (), {
+            "get_max_metrics": lambda self, d: [{"generic": {"vo2MaxValue": 47.0}}],
+            "get_activities_by_date": lambda self, s, e: [],
+        })()
+
+        with patch.object(GarminClient, "client", new_callable=lambda: property(lambda self: mock_garmin)), \
+             patch.object(client, "_pull_day_snapshot", side_effect=mock_pull_day), \
+             patch.object(client, "pull_zone2_minutes", return_value=152), \
+             patch.object(client, "backfill_vo2_zone2", return_value=0) as mock_backfill:
+
+            client.pull_all(history=True, history_days=3, person_id="p-andrew")
+
+        mock_backfill.assert_called_once_with(person_id="p-andrew")

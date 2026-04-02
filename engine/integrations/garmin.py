@@ -968,4 +968,48 @@ class GarminClient:
                 time.sleep(0.3)
             print(f"  Backfill complete: {len(series)} days in series.")
 
+            # Forward-fill vo2_max on historical rows that got NULL from _pull_day_snapshot
+            if person_id:
+                self.backfill_vo2_zone2(person_id=person_id)
+
         return garmin_data
+
+    def backfill_vo2_zone2(self, person_id: str) -> int:
+        """Forward-fill NULL vo2_max on garmin rows from the latest known value.
+
+        VO2 max changes infrequently (weekly at most) on Garmin, so forward-filling
+        from the most recent known value is a reasonable approximation for historical rows.
+        Zone2 varies weekly so we leave those NULL (requires API calls to backfill properly).
+
+        Returns the number of rows updated.
+        """
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+
+        # Find the latest known vo2_max for this person from garmin rows
+        row = db.execute(
+            "SELECT vo2_max FROM wearable_daily "
+            "WHERE person_id = ? AND source = 'garmin' AND vo2_max IS NOT NULL "
+            "ORDER BY date DESC LIMIT 1",
+            (person_id,),
+        ).fetchone()
+
+        if not row:
+            print("  No known vo2_max to forward-fill from.")
+            return 0
+
+        vo2 = row["vo2_max"]
+
+        # Update all garmin rows that have NULL vo2_max
+        cursor = db.execute(
+            "UPDATE wearable_daily SET vo2_max = ?, updated_at = ? "
+            "WHERE person_id = ? AND source = 'garmin' AND vo2_max IS NULL",
+            (vo2, datetime.now().isoformat(timespec="seconds"), person_id),
+        )
+        db.commit()
+
+        updated = cursor.rowcount
+        if updated:
+            print(f"  Forward-filled vo2_max={vo2} on {updated} garmin rows.")
+        return updated
