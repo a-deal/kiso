@@ -106,23 +106,56 @@ def extract_user_status(data_dir: Path, user: dict) -> dict:
         if isinstance(score_section, dict):
             result["metrics"]["score_coverage"] = score_section.get("coverage")
 
-    # Check garmin_latest.json
-    garmin_path = udir / "garmin_latest.json"
-    garmin_data = read_json(garmin_path)
-    if garmin_data:
-        last_updated = garmin_data.get("last_updated")
-        age = file_age_hours(garmin_path)
-        if age is not None and age < 24:
-            status = "connected"
-        elif age is not None:
-            status = "stale"
-        else:
-            status = "missing"
-        result["garmin"] = {
-            "status": status,
-            "last_updated": last_updated,
-            "age_hours": age,
-        }
+    # Wearable freshness: SQLite first, JSON fallback
+    uid = user["user_id"]
+    _wearable_from_sqlite = False
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        _person_row = get_db().execute(
+            "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (uid,),
+        ).fetchone()
+        if _person_row:
+            _w_row = get_db().execute(
+                "SELECT source, date, updated_at FROM wearable_daily "
+                "WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+                (_person_row["id"],),
+            ).fetchone()
+            if _w_row:
+                _wearable_from_sqlite = True
+                ts = datetime.fromisoformat(_w_row["updated_at"].replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+                if age < 24:
+                    status = "connected"
+                else:
+                    status = "stale"
+                result["garmin"] = {
+                    "status": status,
+                    "last_updated": _w_row["updated_at"],
+                    "age_hours": round(age, 1),
+                    "source": _w_row["source"],
+                }
+    except Exception:
+        pass
+
+    if not _wearable_from_sqlite:
+        garmin_path = udir / "garmin_latest.json"
+        garmin_data = read_json(garmin_path)
+        if garmin_data:
+            last_updated = garmin_data.get("last_updated")
+            age = file_age_hours(garmin_path)
+            if age is not None and age < 24:
+                status = "connected"
+            elif age is not None:
+                status = "stale"
+            else:
+                status = "missing"
+            result["garmin"] = {
+                "status": status,
+                "last_updated": last_updated,
+                "age_hours": age,
+            }
 
     return result
 

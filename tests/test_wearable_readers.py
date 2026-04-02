@@ -397,6 +397,310 @@ class TestGetProtocolsSqlite:
         assert avgs["resting_hr"] == 48.0
 
 
+class TestBriefingDailySeriesFromSqliteAllSources:
+    """briefing daily_series should use wearable_daily SQLite for Oura/Whoop, not separate JSON."""
+
+    def test_oura_daily_from_sqlite_no_json(self, tmp_path):
+        """When wearable_daily has oura rows, briefing should not need oura_daily.json."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "Oura User", "oura_user", now, now),
+        )
+
+        # 7 days of oura-only data
+        for i in range(7):
+            d = f"2026-04-{i+1:02d}"
+            conn.execute(
+                "INSERT INTO wearable_daily "
+                "(id, person_id, date, source, rhr, hrv, steps, sleep_hrs, "
+                "sleep_start, vo2_max, zone2_min, "
+                "calories_total, calories_active, calories_bmr, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"o{i}", "p1", d, "oura", 55.0, 45.0, 7000, 7.2,
+                 "23:00", None, None,
+                 2100, 400, 1700, now, now),
+            )
+        conn.commit()
+
+        from engine.coaching.briefing import _load_wearable_daily_sqlite
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            series = _load_wearable_daily_sqlite("p1")
+
+        assert series is not None
+        assert len(series) == 7
+        assert series[0]["source"] == "oura"
+        assert series[0]["rhr"] == 55.0
+
+        close_db()
+
+    def test_whoop_daily_from_sqlite_no_json(self, tmp_path):
+        """When wearable_daily has whoop rows, briefing should not need whoop_daily.json."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "Whoop User", "whoop_user", now, now),
+        )
+
+        for i in range(5):
+            d = f"2026-04-{i+1:02d}"
+            conn.execute(
+                "INSERT INTO wearable_daily "
+                "(id, person_id, date, source, rhr, hrv, steps, sleep_hrs, "
+                "sleep_start, "
+                "calories_total, calories_active, calories_bmr, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"w{i}", "p1", d, "whoop", 60.0, 50.0, 6000, 6.8,
+                 "23:30",
+                 2000, 350, 1650, now, now),
+            )
+        conn.commit()
+
+        from engine.coaching.briefing import _load_wearable_daily_sqlite
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            series = _load_wearable_daily_sqlite("p1")
+
+        assert series is not None
+        assert len(series) == 5
+        assert series[0]["source"] == "whoop"
+
+        close_db()
+
+    def test_briefing_data_available_oura_daily_from_sqlite(self, tmp_path):
+        """BUG: data_available['oura_daily'] is False for Oura users with SQLite data.
+
+        briefing.py line 119 reads oura_daily.json, ignoring that
+        _load_wearable_daily_sqlite already has Oura rows. data_available
+        should reflect the actual presence of daily series data regardless
+        of which file/table it came from.
+        """
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "Oura User", "oura_user", now, now),
+        )
+        for i in range(7):
+            d = f"2026-04-{i+1:02d}"
+            conn.execute(
+                "INSERT INTO wearable_daily "
+                "(id, person_id, date, source, rhr, hrv, steps, sleep_hrs, "
+                "sleep_start, calories_total, calories_active, calories_bmr, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"o{i}", "p1", d, "oura", 55.0, 45.0, 7000, 7.2,
+                 "23:00", 2100, 400, 1700, now, now),
+            )
+        conn.commit()
+
+        # Set up minimal config pointing at a data dir with NO JSON files
+        data_dir = tmp_path / "data" / "users" / "oura_user"
+        data_dir.mkdir(parents=True)
+        (data_dir / "config.yaml").write_text("profile:\n  age: 30\n  sex: M\n")
+
+        config = {
+            "data_dir": str(data_dir),
+            "profile": {"age": 30, "sex": "M"},
+        }
+
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            from engine.coaching.briefing import build_briefing
+            result = build_briefing(config)
+
+        da = result["data_available"]
+        # After migration: unified wearable_daily flag replaces per-source flags
+        assert da.get("wearable_daily") is True, (
+            f"Oura daily data is in SQLite but data_available shows: {da}"
+        )
+        # Per-source daily flags should be gone
+        assert "garmin_daily" not in da
+        assert "oura_daily" not in da
+        assert "whoop_daily" not in da
+
+        close_db()
+
+
+class TestCliScoreUsesWearableSqlite:
+    """cli.py cmd_score should load wearable data from SQLite, not garmin_latest.json."""
+
+    def test_score_populates_profile_from_sqlite(self, tmp_path):
+        """cmd_score should populate UserProfile from wearable_daily SQLite."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "Test User", "test_user", now, now),
+        )
+        for i in range(7):
+            d = f"2026-04-{i+1:02d}"
+            conn.execute(
+                "INSERT INTO wearable_daily "
+                "(id, person_id, date, source, rhr, hrv, steps, sleep_hrs, "
+                "sleep_start, vo2_max, zone2_min, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"g{i}", "p1", d, "garmin", 48.0, 62.0, 9500, 7.5,
+                 "22:30", 47.0, 20, now, now),
+            )
+        conn.commit()
+
+        # data_dir with NO garmin_latest.json
+        data_dir = tmp_path / "data" / "users" / "test_user"
+        data_dir.mkdir(parents=True)
+        assert not (data_dir / "garmin_latest.json").exists()
+
+        from cli import _resolve_person_id, _load_wearable_for_profile
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            person_id = _resolve_person_id(data_dir)
+            assert person_id == "p1"
+            wearable = _load_wearable_for_profile(data_dir, person_id)
+
+        assert wearable is not None
+        assert wearable["resting_hr"] == 48.0
+        assert wearable["daily_steps_avg"] == 9500.0
+
+        close_db()
+
+
+class TestAdminDigestWearableFreshnessSqlite:
+    """admin_digest.py _gather_from_files should get wearable freshness from SQLite."""
+
+    def test_wearable_freshness_from_sqlite_no_json(self, tmp_path):
+        """has_wearable + freshness should come from wearable_daily, not garmin_latest.json."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "Test", "test_user", now, now),
+        )
+        conn.execute(
+            "INSERT INTO wearable_daily "
+            "(id, person_id, date, source, rhr, sleep_hrs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("w1", "p1", "2026-04-02", "garmin", 48.0, 7.5, now, now),
+        )
+        conn.commit()
+
+        # No JSON files
+        user_dir = tmp_path / "data" / "users" / "test_user"
+        user_dir.mkdir(parents=True)
+        assert not (user_dir / "garmin_latest.json").exists()
+
+        from scripts.admin_digest import _wearable_freshness_sqlite
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            freshness = _wearable_freshness_sqlite("p1")
+
+        assert freshness is not None
+        assert freshness["has_wearable"] is True
+        assert freshness["source"] == "garmin"
+        assert freshness["last_date"] == "2026-04-02"
+
+        close_db()
+
+
+class TestDigestHasWearableSqlite:
+    """digest.py has_garmin/has_apple_health should check wearable_daily, not JSON."""
+
+    def test_has_wearable_from_sqlite(self, tmp_path):
+        """has_wearable should be True when wearable_daily has data, even without JSON."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "Test", "test_user", now, now),
+        )
+        conn.execute(
+            "INSERT INTO wearable_daily "
+            "(id, person_id, date, source, rhr, sleep_hrs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("w1", "p1", "2026-04-02", "oura", 55.0, 7.2, now, now),
+        )
+        conn.commit()
+
+        from scripts.digest import _has_wearable_sqlite
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            result = _has_wearable_sqlite("p1")
+
+        assert result is True
+
+        close_db()
+
+
+class TestServerHealthSqliteFreshness:
+    """server.py /health apple_health freshness should check wearable_daily, not JSON."""
+
+    def test_apple_health_freshness_from_sqlite(self, tmp_path):
+        """Should get Apple Health freshness from wearable_daily updated_at."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        conn = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        conn.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p1", "AH User", "ah_user", now, now),
+        )
+        conn.execute(
+            "INSERT INTO wearable_daily "
+            "(id, person_id, date, source, rhr, sleep_hrs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("ah1", "p1", "2026-04-02", "apple_health", 52.0, 7.0, now, now),
+        )
+        conn.commit()
+
+        from engine.gateway.server import _wearable_freshness_sqlite
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            freshness = _wearable_freshness_sqlite("ah_user")
+
+        assert freshness is not None
+        assert freshness["source"] == "apple_health"
+
+        close_db()
+
+
 class TestLoadHealthContextSqlite:
     """v1_api _load_health_context should read weight and meals from SQLite."""
 

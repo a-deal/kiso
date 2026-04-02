@@ -13,6 +13,38 @@ from engine.scoring.engine import score_profile, print_report
 from engine.insights.engine import generate_insights, load_rules
 
 
+def _resolve_person_id(data_dir: Path) -> str | None:
+    """Resolve person_id from data_dir (e.g. .../data/users/andrew -> person_id)."""
+    if "users" not in data_dir.parts:
+        return None
+    user_id = data_dir.name
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        row = get_db().execute(
+            "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (user_id,),
+        ).fetchone()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
+def _load_wearable_for_profile(data_dir: Path, person_id: str | None) -> dict | None:
+    """Load wearable averages: SQLite first, garmin_latest.json fallback."""
+    if person_id:
+        from mcp_server.tools import _load_wearable_averages_sqlite
+        avgs = _load_wearable_averages_sqlite(person_id)
+        if avgs:
+            return avgs
+    # JSON fallback
+    garmin_path = data_dir / "garmin_latest.json"
+    if garmin_path.exists():
+        with open(garmin_path) as f:
+            return json.load(f)
+    return None
+
+
 def load_config(path: str) -> dict:
     """Load config.yaml."""
     p = Path(path)
@@ -36,12 +68,11 @@ def cmd_score(args):
     )
     profile = UserProfile(demographics=demo)
 
-    # Load Garmin data if available
+    # Load wearable data (SQLite first, JSON fallback)
     data_dir = Path(config.get("data_dir", "./data"))
-    garmin_path = data_dir / "garmin_latest.json"
-    if garmin_path.exists():
-        with open(garmin_path) as f:
-            garmin = json.load(f)
+    person_id = _resolve_person_id(data_dir)
+    garmin = _load_wearable_for_profile(data_dir, person_id)
+    if garmin:
         profile.resting_hr = garmin.get("resting_hr")
         profile.daily_steps_avg = garmin.get("daily_steps_avg")
         profile.sleep_regularity_stddev = garmin.get("sleep_regularity_stddev")
@@ -79,19 +110,22 @@ def cmd_insights(args):
     config = load_config(args.config)
     data_dir = Path(config.get("data_dir", "./data"))
 
-    # Load Garmin data
-    garmin = None
-    garmin_path = data_dir / "garmin_latest.json"
-    if garmin_path.exists():
-        with open(garmin_path) as f:
-            garmin = json.load(f)
+    # Load wearable data (SQLite first, JSON fallback)
+    person_id = _resolve_person_id(data_dir)
+    garmin = _load_wearable_for_profile(data_dir, person_id)
 
-    # Load daily series for trends
+    # Load daily series for trends (SQLite first, JSON fallback)
     trends = None
-    series_path = data_dir / "garmin_daily.json"
-    if series_path.exists():
-        with open(series_path) as f:
-            series = json.load(f)
+    series = None
+    if person_id:
+        from engine.coaching.briefing import _load_wearable_daily_sqlite
+        series = _load_wearable_daily_sqlite(person_id)
+    if not series:
+        series_path = data_dir / "garmin_daily.json"
+        if series_path.exists():
+            with open(series_path) as f:
+                series = json.load(f)
+    if series:
         rhr_pts = [{"rhr": e["rhr"]} for e in series if e.get("rhr") is not None]
         hrv_pts = [{"hrv": e["hrv"]} for e in series if e.get("hrv") is not None]
         if rhr_pts or hrv_pts:

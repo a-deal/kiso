@@ -115,16 +115,19 @@ def build_briefing(config: dict) -> dict:
         elif whoop: wearable_source = "whoop"
         elif apple_health: wearable_source = "apple_health"
 
-    garmin_daily = _load_wearable_daily_sqlite(_person_id) or _load_json(data_dir / "garmin_daily.json")
-    oura_daily = _load_json(data_dir / "oura_daily.json")
-    whoop_daily = _load_json(data_dir / "whoop_daily.json")
+    # Unified daily series: SQLite first (all sources), then JSON fallbacks
+    daily_series_data = _load_wearable_daily_sqlite(_person_id)
+    if not daily_series_data:
+        daily_series_data = (
+            _load_json(data_dir / "garmin_daily.json")
+            or _load_json(data_dir / "oura_daily.json")
+            or _load_json(data_dir / "whoop_daily.json")
+        )
     briefing["data_available"]["garmin"] = wearable is not None and wearable_source == "garmin"
     briefing["data_available"]["oura"] = wearable_source == "oura"
     briefing["data_available"]["whoop"] = wearable_source == "whoop"
     briefing["data_available"]["apple_health"] = wearable_source == "apple_health"
-    briefing["data_available"]["garmin_daily"] = garmin_daily is not None
-    briefing["data_available"]["oura_daily"] = oura_daily is not None
-    briefing["data_available"]["whoop_daily"] = whoop_daily is not None
+    briefing["data_available"]["wearable_daily"] = daily_series_data is not None
 
     # --- Daily burn (SQLite first, JSON fallback) ---
     daily_burn = None
@@ -181,8 +184,8 @@ def build_briefing(config: dict) -> dict:
             )
         briefing["daily_burn"] = burn_section
 
-    # Add today's daily snapshot from daily series (garmin or oura or whoop)
-    daily_series = garmin_daily or oura_daily or whoop_daily
+    # Add today's daily snapshot from daily series (unified wearable_daily)
+    daily_series = daily_series_data
     if daily_series and isinstance(daily_series, list):
         today_daily = next((d for d in daily_series if d.get("date") == today), None)
         if not today_daily:
@@ -343,7 +346,7 @@ def build_briefing(config: dict) -> dict:
     # --- Insights ---
     weights_data = _load_weight_log(data_dir, person_id=_person_id)
     bp_data = _load_bp_log(data_dir, person_id=_person_id)
-    trends = _build_trends(garmin_daily or oura_daily or whoop_daily)
+    trends = _build_trends(daily_series_data)
     briefing["data_available"]["weight_log"] = weights_data is not None
     briefing["data_available"]["bp_log"] = bp_data is not None
 

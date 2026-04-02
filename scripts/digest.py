@@ -177,6 +177,34 @@ def safe_float(val, default=0.0):
         return default
 
 
+def _has_wearable_sqlite(person_id: str) -> bool:
+    """Check if person has any wearable data in wearable_daily."""
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        row = get_db().execute(
+            "SELECT 1 FROM wearable_daily WHERE person_id = ? LIMIT 1",
+            (person_id,),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _resolve_person_id(user_id: str):
+    """Resolve user_id to person_id from SQLite."""
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        row = get_db().execute(
+            "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (user_id,),
+        ).fetchone()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Data collection per user
 # ---------------------------------------------------------------------------
@@ -281,17 +309,19 @@ def collect_user_data(user_id):
     if (user_dir / "context.md").exists():
         info["has_context"] = True
 
-    # Apple Health
-    if (user_dir / "apple_health_latest.json").exists():
-        info["has_apple_health"] = True
+    # Wearable data: SQLite first, JSON fallback
+    pid = _resolve_person_id(user_id)
+    if pid and _has_wearable_sqlite(pid):
+        info["has_wearable"] = True
+    else:
+        if (user_dir / "apple_health_latest.json").exists():
+            info["has_apple_health"] = True
+        if (user_dir / "garmin_latest.json").exists():
+            info["has_garmin"] = True
 
     # Lab results
     if (user_dir / "lab_results.json").exists():
         info["has_labs"] = True
-
-    # Garmin
-    if (user_dir / "garmin_latest.json").exists():
-        info["has_garmin"] = True
 
     # Determine last activity date
     last_activity = determine_last_activity(info)
@@ -506,7 +536,7 @@ def classify_stage(info, session_info):
     # Data flowing: has CSV data with dates
     data_keys = ["last_weight_date", "last_meal_date", "last_habit_date", "last_bp_date", "last_strength_date"]
     has_data = any(dp.get(k) for k in data_keys)
-    has_wearable = info.get("has_garmin", False) or info.get("has_apple_health", False)
+    has_wearable = info.get("has_wearable", False) or info.get("has_garmin", False) or info.get("has_apple_health", False)
     has_habit = bool(dp.get("last_habit_date"))
 
     if has_habit:

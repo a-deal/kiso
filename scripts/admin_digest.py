@@ -65,6 +65,32 @@ def _file_age_hours(path: Path) -> Optional[float]:
         return None
 
 
+def _wearable_freshness_sqlite(person_id: str) -> Optional[dict]:
+    """Get wearable freshness from wearable_daily SQLite table.
+
+    Returns dict with has_wearable, source, last_date, updated_at.
+    Returns None if no data found.
+    """
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        row = get_db().execute(
+            "SELECT source, date, updated_at FROM wearable_daily "
+            "WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (person_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "has_wearable": True,
+            "source": row["source"],
+            "last_date": row["date"],
+            "updated_at": row["updated_at"],
+        }
+    except Exception:
+        return None
+
+
 def _user_data_dir(data_dir: Path, user_id: str) -> Path:
     """Return the data directory for a user.
 
@@ -296,20 +322,53 @@ def _gather_from_db(
 
 def _gather_from_files(result: dict, udir: Path, now: datetime):
     """Pull data from CSV/JSON files in the user data directory."""
-    # Garmin freshness
-    garmin_path = udir / "garmin_latest.json"
-    garmin = _read_json(garmin_path)
-    if garmin:
+    # Wearable freshness: SQLite first, JSON fallback
+    uid = result.get("user_id")
+    pid = None
+    if uid:
+        try:
+            from engine.gateway.db import get_db, init_db
+            init_db()
+            row = get_db().execute(
+                "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+                (uid,),
+            ).fetchone()
+            if row:
+                pid = row["id"]
+        except Exception:
+            pass
+
+    freshness = _wearable_freshness_sqlite(pid) if pid else None
+    if freshness:
         result["has_wearable"] = True
-        age = _file_age_hours(garmin_path)
-        result["garmin_age_hours"] = age
-        if age is not None:
+        # Compute age from updated_at
+        try:
+            ts = datetime.fromisoformat(freshness["updated_at"].replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+            result["garmin_age_hours"] = round(age, 1)
             if age < 1:
                 result["garmin_synced_ago"] = "synced <1h ago"
             elif age < 24:
                 result["garmin_synced_ago"] = f"synced {int(age)}h ago"
             else:
                 result["garmin_synced_ago"] = f"synced {int(age / 24)}d ago"
+        except Exception:
+            pass
+    else:
+        # JSON fallback
+        garmin_path = udir / "garmin_latest.json"
+        garmin = _read_json(garmin_path)
+        if garmin:
+            result["has_wearable"] = True
+            age = _file_age_hours(garmin_path)
+            result["garmin_age_hours"] = age
+            if age is not None:
+                if age < 1:
+                    result["garmin_synced_ago"] = "synced <1h ago"
+                elif age < 24:
+                    result["garmin_synced_ago"] = f"synced {int(age)}h ago"
+                else:
+                    result["garmin_synced_ago"] = f"synced {int(age / 24)}d ago"
 
     # Weight from CSV (more complete than DB for some users)
     weight_csv = udir / "weight_log.csv"
