@@ -109,25 +109,35 @@ BINDINGS=$(ssh "$REMOTE" "$REMOTE_PATH; openclaw agents bindings 2>&1")
 echo "$BINDINGS"
 echo ""
 
-# Verify expected bindings exist
+# Verify expected bindings and enforce routing rules
 echo "$BINDINGS" | python3 -c "
 import sys
 lines = sys.stdin.read()
 
+# Required bindings
 expected = {
-    'k <- telegram peer=dm:80135247': 'Andrew Telegram -> K',
     'main <- telegram': 'Default Telegram -> Milo',
 }
 
-missing = []
+# Forbidden bindings: Grigoriy (80135247) must NEVER route to K or any non-main agent
+forbidden = {
+    'k <- telegram peer=dm:80135247': 'Grigoriy must route to main (Milo), not K',
+}
+
+issues = []
 for pattern, label in expected.items():
     if pattern not in lines:
-        missing.append(f'  MISSING: {label} ({pattern})')
+        issues.append(f'  MISSING: {label} ({pattern})')
 
-if missing:
-    print('BINDING ISSUES:')
-    for m in missing:
-        print(m)
+for pattern, label in forbidden.items():
+    if pattern in lines:
+        issues.append(f'  FORBIDDEN: {label} ({pattern})')
+        issues.append(f'  FIX: openclaw agents unbind --agent k --all')
+
+if issues:
+    print('ROUTING ISSUES:')
+    for i in issues:
+        print(i)
     print('')
     print('Check: openclaw agents bindings')
     sys.exit(1)
