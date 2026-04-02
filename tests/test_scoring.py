@@ -99,6 +99,53 @@ def test_score_partial_profile():
     assert len(output["gaps"]) > 0
 
 
+def test_assess_normalizes_sex_to_single_letter():
+    """Cutoff tables use 'M'/'F' but config may pass 'MALE'/'FEMALE'.
+    assess() must handle both. This was the root cause of null percentiles
+    for VO2 Max, HRV, RHR when sex='MALE' from config.yaml.
+    """
+    from engine.scoring.tables import VO2_MAX, HRV_RMSSD, RHR
+    demo_male = Demographics(age=35, sex="MALE")
+    demo_m = Demographics(age=35, sex="M")
+
+    # VO2 Max should return the same result for both
+    s1, p1 = assess(47.0, VO2_MAX, demo_male)
+    s2, p2 = assess(47.0, VO2_MAX, demo_m)
+    assert s1 == s2, f"VO2 sex='MALE' got {s1}, sex='M' got {s2}"
+    assert p1 == p2
+    assert p1 is not None, "VO2 percentile should not be None for age=35"
+
+    # HRV should work with both
+    s1, p1 = assess(55.0, HRV_RMSSD, demo_male)
+    assert s1 != Standing.UNKNOWN, f"HRV with sex='MALE' returned UNKNOWN"
+    assert p1 is not None
+
+    # RHR should work with both
+    s1, p1 = assess(52.0, RHR, demo_male)
+    assert s1 != Standing.UNKNOWN, f"RHR with sex='MALE' returned UNKNOWN"
+    assert p1 is not None
+
+
+def test_bp_reliability_uses_actual_count():
+    """BP reliability should reflect actual reading count, not default to 1.
+    With 16 readings, should use protocol reliability (1.0), not single (0.5).
+    """
+    profile = UserProfile(
+        demographics=Demographics(age=35, sex="M"),
+        systolic=120,
+        diastolic=75,
+    )
+    # Single reading: reliability should be 0.5
+    output_single = score_profile(profile)
+    bp_result_single = next(r for r in output_single["results"] if r.name == "Blood Pressure")
+    assert bp_result_single.reliability == 0.5, f"Single BP reading should have 0.5 reliability, got {bp_result_single.reliability}"
+
+    # Protocol (7+ readings): reliability should be 1.0
+    output_protocol = score_profile(profile, metric_counts={"bp": 16})
+    bp_result_protocol = next(r for r in output_protocol["results"] if r.name == "Blood Pressure")
+    assert bp_result_protocol.reliability == 1.0, f"16 BP readings should have 1.0 reliability, got {bp_result_protocol.reliability}"
+
+
 def test_results_have_required_fields():
     """Each MetricResult should have the expected fields."""
     profile = UserProfile(

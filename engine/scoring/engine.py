@@ -100,16 +100,21 @@ def assess(value: Optional[float], table: dict, demo: Demographics,
     if value is None:
         return Standing.UNKNOWN, None
 
+    # Normalize sex: config may use "MALE"/"FEMALE", tables use "M"/"F"
+    sex = demo.sex
+    if sex and len(sex) > 1:
+        sex = sex[0].upper()
+
     # Try NHANES continuous scoring first
     if NHANES_AVAILABLE and nhanes_key and nhanes_key in NHANES_KEY_MAP:
         bucket = age_bucket(demo.age)
-        pct = nhanes_percentile(NHANES_KEY_MAP[nhanes_key], value, bucket, demo.sex)
+        pct = nhanes_percentile(NHANES_KEY_MAP[nhanes_key], value, bucket, sex)
         if pct is not None:
             return percentile_to_standing(pct), round(pct)
 
     # Fallback: manual cutoff tables (5-bucket approximation)
     bucket = age_bucket(demo.age)
-    key = (bucket, demo.sex)
+    key = (bucket, sex)
     cutoffs = table["cutoffs"].get(key) or table["cutoffs"].get("universal")
     if not cutoffs:
         return Standing.UNKNOWN, None

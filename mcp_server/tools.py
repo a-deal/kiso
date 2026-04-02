@@ -418,6 +418,15 @@ def _score(user_id: str | None = None) -> dict:
     metric_dates = {}
     metric_counts = {}
 
+    # BP reading count for reliability (16 readings -> protocol reliability 1.0)
+    if _pid:
+        from engine.gateway.db import get_db as _bp_db
+        _bp_count = _bp_db().execute(
+            "SELECT COUNT(*) FROM bp_entry WHERE person_id = ?", (_pid,)
+        ).fetchone()[0]
+        if _bp_count:
+            metric_counts["bp"] = _bp_count
+
     # Try SQLite labs first
     _sqlite_labs = _latest_labs_sqlite(_pid)
     if _sqlite_labs:
