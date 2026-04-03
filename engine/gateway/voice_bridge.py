@@ -386,7 +386,7 @@ async def voice_ws_handler(websocket: WebSocket):
                     "session": {
                         "modalities": ["text", "audio"],
                         "instructions": system_prompt,
-                        "voice": "onyx",
+                        "voice": "cedar",
                         "input_audio_format": "g711_ulaw",
                         "output_audio_format": "g711_ulaw",
                         "input_audio_transcription": {"model": "whisper-1"},
