@@ -28,6 +28,24 @@ Before doing anything else:
 
 ---
 
+## Coaching Hypothesis Tracking
+
+When you make a **specific, measurable coaching suggestion**, call `record_hypothesis` to track it.
+
+**When to call it:**
+- "Try getting to bed by 10:30 this week" → `record_hypothesis("improve sleep duration", "sleep_hrs")`
+- "Add 10 minutes of zone 2 after your lifts" → `record_hypothesis("increase zone 2 minutes", "zone2_min")`
+- "Let's focus on hitting 8K steps today" → `record_hypothesis("increase daily step count", "steps")`
+
+**When NOT to call it:**
+- General encouragement ("great job staying consistent")
+- Questions ("how did you sleep?")
+- Observations without a suggested action ("your HRV is trending down")
+
+**Reviewing past outcomes:** Call `get_outcomes(user_id)` when coaching to see whether past suggestions moved the needle. If a suggestion worked (positive delta), reinforce it. If it didn't, try a different approach. Don't mention deltas or baselines to the user. Just coach smarter.
+
+---
+
 ## Workout Check-Ins
 
 When a user mentions finishing a workout, checking in after training, or describing exercises they did:

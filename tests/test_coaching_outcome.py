@@ -539,3 +539,147 @@ class TestHypothesisWiring:
 
         count = db_with_baseline.execute("SELECT COUNT(*) FROM coaching_outcome").fetchone()[0]
         assert count == 0
+
+
+# --- Tests: MCP tool wrappers for conversational hypothesis recording ---
+
+class TestRecordHypothesisTool:
+    """MCP tool: record_hypothesis — lets Milo record a hypothesis during conversation."""
+
+    def test_registered_in_tool_registry(self):
+        from mcp_server.tools import TOOL_REGISTRY, _record_hypothesis_tool
+        assert "record_hypothesis" in TOOL_REGISTRY
+        assert TOOL_REGISTRY["record_hypothesis"] is _record_hypothesis_tool
+
+    def test_records_with_baseline(self, db_with_baseline):
+        from unittest.mock import patch
+        from mcp_server.tools import _record_hypothesis_tool
+
+        with patch("mcp_server.tools._resolve_person_id", return_value="andrew-001"), \
+             patch("engine.gateway.db.get_db", return_value=db_with_baseline), \
+             patch("engine.gateway.db.init_db"):
+            result = _record_hypothesis_tool(
+                hypothesis="improve sleep duration",
+                metric_key="sleep_hrs",
+                user_id="andrew",
+            )
+
+        assert result["status"] == "recorded"
+        assert result["outcome"]["hypothesis"] == "improve sleep duration"
+        assert result["outcome"]["metric_key"] == "sleep_hrs"
+        assert result["outcome"]["baseline_value"] is not None
+
+    def test_records_without_baseline(self, db_with_andrew):
+        """No wearable data means baseline is None, but hypothesis still records."""
+        from unittest.mock import patch
+        from mcp_server.tools import _record_hypothesis_tool
+
+        with patch("mcp_server.tools._resolve_person_id", return_value="andrew-001"), \
+             patch("engine.gateway.db.get_db", return_value=db_with_andrew), \
+             patch("engine.gateway.db.init_db"):
+            result = _record_hypothesis_tool(
+                hypothesis="increase daily step count",
+                metric_key="steps",
+                user_id="andrew",
+            )
+
+        assert result["status"] == "recorded"
+        assert result["outcome"]["baseline_value"] is None
+
+    def test_rejects_invalid_metric_key(self, db_with_andrew):
+        from unittest.mock import patch
+        from mcp_server.tools import _record_hypothesis_tool
+
+        with patch("mcp_server.tools._resolve_person_id", return_value="andrew-001"), \
+             patch("engine.gateway.db.get_db", return_value=db_with_andrew), \
+             patch("engine.gateway.db.init_db"):
+            result = _record_hypothesis_tool(
+                hypothesis="improve vibes",
+                metric_key="vibes",
+                user_id="andrew",
+            )
+
+        assert result["status"] == "error"
+        assert "vibes" in result["message"]
+
+    def test_requires_person(self):
+        from unittest.mock import patch
+        from mcp_server.tools import _record_hypothesis_tool
+
+        with patch("mcp_server.tools._resolve_person_id", return_value=None):
+            result = _record_hypothesis_tool(
+                hypothesis="improve HRV",
+                metric_key="hrv",
+                user_id="unknown-user",
+            )
+
+        assert result["status"] == "error"
+        assert "not found" in result["message"].lower()
+
+
+class TestGetOutcomesTool:
+    """MCP tool: get_outcomes — lets Milo review past hypothesis results."""
+
+    def test_registered_in_tool_registry(self):
+        from mcp_server.tools import TOOL_REGISTRY, _get_outcomes_tool
+        assert "get_outcomes" in TOOL_REGISTRY
+        assert TOOL_REGISTRY["get_outcomes"] is _get_outcomes_tool
+
+    def test_returns_outcomes(self, db_with_baseline):
+        from unittest.mock import patch
+        from engine.coaching.outcomes import record_hypothesis
+        from mcp_server.tools import _get_outcomes_tool
+
+        # Seed a hypothesis
+        record_hypothesis(db_with_baseline, "andrew-001", "improve HRV", "hrv")
+
+        with patch("mcp_server.tools._resolve_person_id", return_value="andrew-001"), \
+             patch("engine.gateway.db.get_db", return_value=db_with_baseline), \
+             patch("engine.gateway.db.init_db"):
+            result = _get_outcomes_tool(user_id="andrew")
+
+        assert result["count"] == 1
+        assert result["outcomes"][0]["hypothesis"] == "improve HRV"
+        assert result["outcomes"][0]["metric_key"] == "hrv"
+
+    def test_empty_when_no_outcomes(self, db_with_andrew):
+        from unittest.mock import patch
+        from mcp_server.tools import _get_outcomes_tool
+
+        with patch("mcp_server.tools._resolve_person_id", return_value="andrew-001"), \
+             patch("engine.gateway.db.get_db", return_value=db_with_andrew), \
+             patch("engine.gateway.db.init_db"):
+            result = _get_outcomes_tool(user_id="andrew")
+
+        assert result["count"] == 0
+        assert result["outcomes"] == []
+
+    def test_days_filter(self, db_with_baseline):
+        from unittest.mock import patch
+        from mcp_server.tools import _get_outcomes_tool
+
+        # Insert an old hypothesis directly (60 days ago)
+        old_date = (datetime.utcnow() - timedelta(days=60)).isoformat(timespec="seconds")
+        db_with_baseline.execute(
+            "INSERT INTO coaching_outcome (person_id, hypothesis, metric_key, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("andrew-001", "old hypothesis", "steps", old_date),
+        )
+        db_with_baseline.commit()
+
+        with patch("mcp_server.tools._resolve_person_id", return_value="andrew-001"), \
+             patch("engine.gateway.db.get_db", return_value=db_with_baseline), \
+             patch("engine.gateway.db.init_db"):
+            result = _get_outcomes_tool(user_id="andrew", days=30)
+
+        assert result["count"] == 0  # 60-day-old outcome excluded by 30-day filter
+
+    def test_requires_person(self):
+        from unittest.mock import patch
+        from mcp_server.tools import _get_outcomes_tool
+
+        with patch("mcp_server.tools._resolve_person_id", return_value=None):
+            result = _get_outcomes_tool(user_id="unknown-user")
+
+        assert result["status"] == "error"
+        assert "not found" in result["message"].lower()
