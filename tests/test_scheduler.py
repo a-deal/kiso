@@ -639,3 +639,70 @@ class TestSchedulerRoutes:
             headers={"Authorization": "Bearer admin-token-xyz"},
         )
         assert resp.status_code == 200
+
+    def test_measure_outcomes_route_exists(self, client):
+        resp = client.post("/api/v1/scheduled/measure-outcomes?token=admin-token-xyz")
+        assert resp.status_code == 200
+
+    def test_measure_outcomes_rejects_bad_token(self, client):
+        resp = client.post("/api/v1/scheduled/measure-outcomes?token=wrong")
+        assert resp.status_code == 403
+
+
+# --- Coaching outcome measurement wiring tests ---
+
+
+class TestMeasureOutcomesWiring:
+    """measure_outcomes runs during morning brief and via standalone endpoint."""
+
+    @patch("engine.gateway.scheduler._compose_message", return_value="Morning brief")
+    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    @patch("engine.gateway.scheduler.measure_outcomes")
+    def test_morning_brief_triggers_measure(self, mock_measure, mock_audit, mock_persons,
+                                             mock_now, mock_context, mock_compose, db_with_andrew):
+        mock_persons.return_value = [
+            {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+             "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+        ]
+        mock_now.return_value = datetime(2026, 4, 2, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+        mock_measure.return_value = []
+
+        _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        mock_measure.assert_called_once()
+
+    @patch("engine.gateway.scheduler._compose_message", return_value="Evening checkin")
+    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    @patch("engine.gateway.scheduler.measure_outcomes")
+    def test_evening_checkin_does_not_trigger_measure(self, mock_measure, mock_audit, mock_persons,
+                                                       mock_now, mock_context, mock_compose, db_with_andrew):
+        mock_persons.return_value = [
+            {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+             "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+        ]
+        mock_now.return_value = datetime(2026, 4, 2, 20, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+        _run_schedule("evening_checkin", target_hour=20, dry_run=True)
+
+        mock_measure.assert_not_called()
+
+    @patch("engine.gateway.scheduler.measure_outcomes")
+    def test_standalone_endpoint_calls_measure(self, mock_measure):
+        mock_measure.return_value = [{"id": 1, "delta": 500}]
+
+        config = GatewayConfig(port=18899, api_token="admin-token-xyz")
+        app = create_app(config)
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        resp = client.post("/api/v1/scheduled/measure-outcomes?token=admin-token-xyz")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["measured_count"] == 1
+        mock_measure.assert_called_once()

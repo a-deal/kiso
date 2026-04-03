@@ -21,6 +21,8 @@ from datetime import datetime
 
 from zoneinfo import ZoneInfo
 
+from engine.coaching.outcomes import measure_outcomes
+
 logger = logging.getLogger("kiso.scheduler")
 
 # OpenClaw binary path on Mac Mini
@@ -347,6 +349,14 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
             "send_result": send_result,
         })
 
+    # Piggyback outcome measurement on the morning brief pass (once daily)
+    if schedule_type == "morning_brief":
+        try:
+            measured = measure_outcomes(db)
+            logger.info("Measured %d coaching outcomes during morning brief", len(measured))
+        except Exception as e:
+            logger.error("Failed to measure coaching outcomes: %s", e)
+
     summary = {
         "schedule_type": schedule_type,
         "dry_run": dry_run,
@@ -441,3 +451,12 @@ def register_scheduler_routes(app):
         _verify_admin(request, token)
         result = _run_schedule("weekly_review", target_hour=18, require_friday=True, dry_run=dry_run, force_user=force_user)
         return JSONResponse(result)
+
+    @app.post("/api/v1/scheduled/measure-outcomes")
+    async def scheduled_measure_outcomes(request: Request, token: str = Query(None)):
+        _verify_admin(request, token)
+        from .db import get_db, init_db
+        init_db()
+        db = get_db()
+        results = measure_outcomes(db)
+        return JSONResponse({"measured_count": len(results), "results": results})

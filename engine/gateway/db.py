@@ -425,6 +425,23 @@ CREATE TABLE IF NOT EXISTS scheduled_send (
     UNIQUE(person_id, schedule_type, sent_date)
 );
 
+-- Behavior change measurement: links coaching messages to outcome deltas
+CREATE TABLE IF NOT EXISTS coaching_outcome (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id       TEXT NOT NULL REFERENCES person(id),
+    scheduled_send_id INTEGER,
+    hypothesis      TEXT NOT NULL,
+    metric_key      TEXT NOT NULL,
+    baseline_value  REAL,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    measured_at     TEXT,
+    measured_value  REAL,
+    delta           REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_coaching_outcome_person ON coaching_outcome(person_id);
+CREATE INDEX IF NOT EXISTS idx_coaching_outcome_unmeasured ON coaching_outcome(measured_at) WHERE measured_at IS NULL;
+
 -- Per-user issue tracker: auto-created from signals and audit error spikes
 CREATE TABLE IF NOT EXISTS user_issue (
     id          TEXT PRIMARY KEY,
