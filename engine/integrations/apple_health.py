@@ -287,9 +287,9 @@ class AppleHealthParser:
         return result
 
     def save(self, latest: dict) -> Path:
-        """Write parsed metrics to apple_health_latest.json."""
+        """No-op: JSON writes removed (Tier 4). SQLite is the write target.
+
+        Returns the legacy path for backward compatibility with callers.
+        """
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.data_dir / "apple_health_latest.json"
-        with open(out_path, "w") as f:
-            json.dump(latest, f, indent=2)
-        return out_path
+        return self.data_dir / "apple_health_latest.json"

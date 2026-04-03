@@ -116,10 +116,9 @@ class TestImportAppleHealthTool:
             )
 
         assert result["imported"] is True
+        # Tier 4: JSON file should NOT be written
         saved = data_dir / "apple_health_latest.json"
-        assert saved.exists()
-        content = json.loads(saved.read_text())
-        assert content["source"] == "apple_health"
+        assert not saved.exists(), "apple_health_latest.json should not be written (Tier 4)"
 
     def test_file_not_found(self):
         """Should return error dict for missing file."""

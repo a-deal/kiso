@@ -411,13 +411,7 @@ class GarminClient:
         except Exception as e:
             print(f"  Heart rate error: {e}", file=sys.stderr)
 
-        # Save snapshot
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.data_dir / "garmin_today.json"
         result["last_updated"] = datetime.now().isoformat(timespec="seconds")
-        with open(out_path, "w") as f:
-            json.dump(result, f, indent=2)
-
         return result
 
     def pull_daily_series(self, days=90) -> list[dict]:
@@ -708,32 +702,14 @@ class GarminClient:
         return entry
 
     def _append_to_daily_series(self, snapshot: dict, person_id: str | None = None) -> list:
-        """Append a day snapshot to garmin_daily.json AND wearable_daily SQLite table.
+        """Append a day snapshot to wearable_daily SQLite table.
 
-        Dual-write during CSV→SQLite migration. Returns the full JSON series list.
+        Returns the snapshot in a list for backward compatibility.
         """
-        # JSON write (legacy)
-        series_path = self.data_dir / "garmin_daily.json"
-        series = []
-        if series_path.exists():
-            try:
-                with open(series_path) as f:
-                    series = json.load(f)
-            except (json.JSONDecodeError, IOError):
-                series = []
-
         snap_date = snapshot["date"]
-        series = [e for e in series if e.get("date") != snap_date]
-        series.append(snapshot)
-        series.sort(key=lambda e: e.get("date", ""))
+        series = [snapshot]
 
-        if len(series) > 180:
-            series = series[-180:]
-
-        with open(series_path, "w") as f:
-            json.dump(series, f, indent=2)
-
-        # SQLite write (new)
+        # SQLite write
         if person_id:
             try:
                 import uuid as _uuid
@@ -925,34 +901,8 @@ class GarminClient:
             },
         }
 
-        out_path = self.data_dir / "garmin_latest.json"
-        with open(out_path, "w") as f:
-            json.dump(garmin_data, f, indent=2)
-        print(f"\nSaved to {out_path}")
-
         metric_keys = [k for k in avgs if avgs[k] is not None]
         print(f"{len(metric_keys)}/{len(avgs)} averages computed from {len(series)} days of history.")
-
-        # Workouts (on-demand, separate API calls)
-        if workouts:
-            workout_list = self.pull_workouts(days=workout_days)
-            if workout_list:
-                workouts_path = self.data_dir / "garmin_workouts.json"
-                existing = []
-                if workouts_path.exists():
-                    try:
-                        with open(workouts_path) as f:
-                            existing = json.load(f)
-                    except (json.JSONDecodeError, IOError):
-                        pass
-                existing_ids = {w["activity_id"] for w in existing if "activity_id" in w}
-                for w in workout_list:
-                    if w["activity_id"] not in existing_ids:
-                        existing.append(w)
-                existing.sort(key=lambda w: w.get("date", ""), reverse=True)
-                with open(workouts_path, "w") as f:
-                    json.dump(existing, f, indent=2)
-                print(f"  Saved {len(existing)} workouts to {workouts_path.name}")
 
         # Historical backfill (only when explicitly requested)
         if history:

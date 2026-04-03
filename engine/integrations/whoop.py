@@ -368,19 +368,8 @@ class WhoopClient:
             "zone2_min_per_week": zone2,
         }
 
-        # Save to data dir
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.data_dir / "whoop_latest.json"
-
         metric_keys = [k for k in whoop_data if k not in ("last_updated", "source")]
         filled = sum(1 for k in metric_keys if whoop_data[k] is not None)
-
-        if filled > 0:
-            with open(out_path, "w") as f:
-                json.dump(whoop_data, f, indent=2)
-            print(f"\nSaved to {out_path}")
-        else:
-            print(f"\nNo metrics retrieved. Keeping existing {out_path.name} unchanged.")
 
         print(f"\n{filled}/{len(metric_keys)} metrics pulled successfully.")
 
@@ -391,15 +380,8 @@ class WhoopClient:
         # Build daily series for trend analysis
         if history:
             series = self._build_daily_series(recovery, sleep, days=history_days)
-            if series:
-                series_path = self.data_dir / "whoop_daily.json"
-                with open(series_path, "w") as f:
-                    json.dump(series, f, indent=2)
-                print(f"Saved daily series to {series_path}")
-
-                # Write each day to wearable_daily SQLite
-                if person_id:
-                    self._write_series_to_sqlite(series, person_id)
+            if series and person_id:
+                self._write_series_to_sqlite(series, person_id)
 
         return whoop_data
 

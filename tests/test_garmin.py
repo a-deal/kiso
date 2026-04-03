@@ -345,6 +345,65 @@ class TestBackfillVo2Zone2:
         assert row["vo2_max"] is None  # apple_health row untouched
 
 
+class TestTier4NoJsonWrites:
+    """Tier 4: _append_to_daily_series writes to SQLite only, not JSON."""
+
+    def _make_client(self, tmp_path):
+        data_dir = tmp_path / "data" / "users" / "andrew"
+        data_dir.mkdir(parents=True)
+        return GarminClient(data_dir=str(data_dir)), data_dir
+
+    def _setup_db(self, tmp_path):
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+        db_path = tmp_path / "kasane.db"
+        init_db(db_path)
+        db = get_db(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("p-andrew", "Andrew", "andrew", now, now),
+        )
+        db.commit()
+        return db_path
+
+    def test_append_writes_sqlite_not_json(self, tmp_path):
+        """_append_to_daily_series should write to SQLite and NOT create garmin_daily.json."""
+        db_path = self._setup_db(tmp_path)
+        from engine.gateway.db import get_db
+        client, data_dir = self._make_client(tmp_path)
+
+        snapshot = {
+            "date": "2026-04-02",
+            "rhr": 48.0, "hrv": 62.0, "steps": 9500,
+            "sleep_hrs": 7.5, "vo2_max": 51.3,
+            "deep_sleep_hrs": None, "light_sleep_hrs": None,
+            "rem_sleep_hrs": None, "awake_hrs": None,
+            "sleep_start": None, "sleep_end": None,
+            "hrv_weekly_avg": None, "hrv_status": None,
+            "calories_total": None, "calories_active": None,
+            "calories_bmr": None, "stress_avg": None,
+            "floors": None, "distance_m": None,
+            "max_hr": None, "min_hr": None,
+        }
+
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            client._append_to_daily_series(snapshot, person_id="p-andrew")
+
+        # SQLite should have the row
+        db = get_db(db_path)
+        row = db.execute(
+            "SELECT rhr FROM wearable_daily WHERE person_id = 'p-andrew' AND date = '2026-04-02'"
+        ).fetchone()
+        assert row is not None
+        assert row["rhr"] == 48.0
+
+        # JSON file should NOT exist
+        json_path = data_dir / "garmin_daily.json"
+        assert not json_path.exists(), f"garmin_daily.json should not be written (Tier 4), but found at {json_path}"
+
+
 class TestPullAllHistoryBackfill:
     """Verify pull_all(history=True) calls backfill_vo2_zone2 after backfill."""
 

@@ -222,8 +222,6 @@ def test_save_creates_json(sample_xml, tmp_path):
     result = parser.parse_export(str(sample_xml), lookback_days=90)
     out_path = parser.save(result)
 
-    assert out_path.exists()
+    # Tier 4: save() no longer writes JSON, just returns the legacy path
     assert out_path.name == "apple_health_latest.json"
-    saved = json.loads(out_path.read_text())
-    assert saved["source"] == "apple_health"
-    assert "resting_hr" in saved
+    assert not out_path.exists(), "save() should not write JSON after Tier 4"

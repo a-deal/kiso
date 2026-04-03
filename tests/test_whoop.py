@@ -269,12 +269,9 @@ class TestPullAll:
         assert result["sleep_duration_avg"] == 8.0
         assert result["source"] == "whoop"
 
-        # Check file was saved
+        # Tier 4: JSON file should NOT be written
         out_path = tmp_path / "whoop_latest.json"
-        assert out_path.exists()
-        saved = json.loads(out_path.read_text())
-        assert saved["source"] == "whoop"
-        assert saved["resting_hr"] == 58.0
+        assert not out_path.exists(), "whoop_latest.json should not be written (Tier 4)"
 
     def test_saves_daily_series_with_history(self, tmp_path):
         """pull_all with history=True should save whoop_daily.json."""
@@ -303,18 +300,9 @@ class TestPullAll:
              patch.object(client, 'pull_workouts', return_value=[]):
             client.pull_all(history=True, history_days=5)
 
+        # Tier 4: JSON file should NOT be written
         series_path = tmp_path / "whoop_daily.json"
-        assert series_path.exists()
-        series = json.loads(series_path.read_text())
-        assert isinstance(series, list)
-        assert len(series) == 5
-        # Verify schema matches garmin_daily.json
-        for entry in series:
-            assert "date" in entry
-            assert "rhr" in entry
-            assert "hrv" in entry
-            assert "steps" in entry
-            assert "sleep_hrs" in entry
+        assert not series_path.exists(), "whoop_daily.json should not be written (Tier 4)"
 
     def test_no_data_doesnt_overwrite(self, tmp_path):
         """If API returns no data, existing file should be kept."""

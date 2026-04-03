@@ -244,12 +244,9 @@ class TestPullAll:
         assert result["sleep_duration_avg"] == 7.0
         assert result["daily_steps_avg"] == 9500
 
-        # Check file was saved
+        # Tier 4: JSON file should NOT be written
         out_path = tmp_path / "oura_latest.json"
-        assert out_path.exists()
-        saved = json.loads(out_path.read_text())
-        assert saved["source"] == "oura"
-        assert saved["resting_hr"] == 55.0
+        assert not out_path.exists(), "oura_latest.json should not be written (Tier 4)"
 
     def test_saves_daily_series_with_history(self, tmp_path):
         """pull_all with history=True should save oura_daily.json."""
@@ -278,18 +275,9 @@ class TestPullAll:
              patch.object(client, 'pull_readiness', return_value=[]):
             client.pull_all(history=True, history_days=5)
 
+        # Tier 4: JSON file should NOT be written
         series_path = tmp_path / "oura_daily.json"
-        assert series_path.exists()
-        series = json.loads(series_path.read_text())
-        assert isinstance(series, list)
-        assert len(series) == 5
-        # Verify schema matches garmin_daily.json
-        for entry in series:
-            assert "date" in entry
-            assert "rhr" in entry
-            assert "hrv" in entry
-            assert "steps" in entry
-            assert "sleep_hrs" in entry
+        assert not series_path.exists(), "oura_daily.json should not be written (Tier 4)"
 
     def test_no_data_doesnt_overwrite(self, tmp_path):
         """If API returns no data, existing file should be kept."""
