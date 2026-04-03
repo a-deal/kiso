@@ -189,9 +189,9 @@ Integration standards:
 - Narrowest OAuth scope that works
 
 **Claude.ai custom connector OAuth — known bugs (Apr 2026):**
-Our OAuth 2.1 server is correct. These are client-side bugs in claude.ai, confirmed by multiple reporters with different MCP providers. Filed as anthropics/claude-ai-mcp#132-136.
+Our OAuth 2.1 server is correct. These are client-side bugs in claude.ai, confirmed by Anthropic support and multiple reporters. Tracking: kasane-life/kiso#1 (upstream: anthropics/claude-ai-mcp#132-136).
 - Settings page shows "Authorization failed" even when tools work fine in chat. Cosmetic only.
-- Intermittent: OAuth completes but Claude never sends Bearer token on subsequent requests (#136). No server-side fix. If a user hits this, removing and re-adding the connector usually resolves it.
+- Intermittent: OAuth completes but Claude never sends Bearer token on subsequent requests. No server-side fix. Removing and re-adding the connector usually resolves it.
 - Do not "fix" the server to work around these. The server is correct.
 
 ## Methodology
