@@ -21,7 +21,7 @@ from datetime import datetime
 
 from zoneinfo import ZoneInfo
 
-from engine.coaching.outcomes import measure_outcomes
+from engine.coaching.outcomes import extract_hypothesis, measure_outcomes, record_hypothesis
 
 logger = logging.getLogger("kiso.scheduler")
 
@@ -326,6 +326,14 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
             logger.error("Failed to compose message for %s: %s", user_id, e)
             results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
             continue
+
+        # Extract and record behavior change hypothesis (best-effort)
+        try:
+            hyp = extract_hypothesis(message)
+            if hyp:
+                record_hypothesis(db, person_id, hypothesis=hyp["hypothesis"], metric_key=hyp["metric_key"])
+        except Exception as e:
+            logger.warning("Failed to record hypothesis for %s: %s", user_id, e)
 
         if dry_run:
             _record_send(db, person_id, schedule_type, sent_date, status="dry_run", preview=message)

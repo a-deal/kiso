@@ -390,3 +390,152 @@ class TestExportOutcomesCsv:
         csv_str = export_outcomes_csv(db_with_baseline, "andrew-001", days=30)
         lines = csv_str.strip().split("\n")
         assert len(lines) == 1  # header only, old row filtered out
+
+
+# --- Tests: extract_hypothesis ---
+
+class TestExtractHypothesis:
+    """Rule-based extraction of hypothesis + metric_key from coaching messages."""
+
+    def test_hrv_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Your HRV dropped to 52. Try getting to bed by 10:30 tonight.")
+        assert result is not None
+        assert result["metric_key"] == "hrv"
+        assert len(result["hypothesis"]) > 0
+
+    def test_sleep_hours_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Sleep was 5.8 hrs last night. That's dragging recovery.")
+        assert result is not None
+        assert result["metric_key"] == "sleep_hrs"
+
+    def test_steps_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("You've hit 6k steps today. Try a 15-min walk before dinner.")
+        assert result is not None
+        assert result["metric_key"] == "steps"
+
+    def test_rhr_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("RHR trending up from 48 to 52 this week.")
+        assert result is not None
+        assert result["metric_key"] == "rhr"
+
+    def test_resting_heart_rate_phrase(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Your resting heart rate has been climbing. Focus on recovery.")
+        assert result is not None
+        assert result["metric_key"] == "rhr"
+
+    def test_walk_maps_to_steps(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Try a 20-minute walk after lunch today.")
+        assert result is not None
+        assert result["metric_key"] == "steps"
+
+    def test_body_battery_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Body battery is at 25. Take it easy today.")
+        assert result is not None
+        assert result["metric_key"] == "body_battery"
+
+    def test_stress_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Stress levels have been elevated all week. Try 10 min of breathwork.")
+        assert result is not None
+        assert result["metric_key"] == "stress_avg"
+
+    def test_no_metric_returns_none(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("No meals logged yet. Try to log dinner before bed.")
+        assert result is None
+
+    def test_generic_encouragement_returns_none(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Great job staying consistent this week. Keep it up!")
+        assert result is None
+
+    def test_dashboard_link_not_matched(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Your dashboard: https://dashboard.mybaseline.health/dashboard/member.html")
+        assert result is None
+
+    def test_first_metric_wins(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        # Sleep mentioned first, then steps
+        result = extract_hypothesis("Sleep was 5.8 hrs. You also only hit 4k steps. Move more tomorrow.")
+        assert result is not None
+        assert result["metric_key"] == "sleep_hrs"
+
+    def test_case_insensitive(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("your hrv is looking solid at 71ms.")
+        assert result is not None
+        assert result["metric_key"] == "hrv"
+
+    def test_deep_sleep_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("Deep sleep was only 45 minutes. That's well below your average.")
+        assert result is not None
+        assert result["metric_key"] == "deep_sleep_hrs"
+
+    def test_zone2_mention(self):
+        from engine.coaching.outcomes import extract_hypothesis
+        result = extract_hypothesis("You logged 0 zone 2 minutes this week. Even a brisk walk counts.")
+        assert result is not None
+        assert result["metric_key"] == "zone2_min"
+
+
+# --- Tests: extract_hypothesis wired into scheduler ---
+
+class TestHypothesisWiring:
+    """Scheduler calls extract_hypothesis + record_hypothesis after compose."""
+
+    def test_hypothesis_recorded_on_send(self, db_with_baseline):
+        from unittest.mock import patch, MagicMock
+        from engine.gateway.scheduler import _run_schedule
+
+        with patch("engine.gateway.scheduler._compose_message", return_value="Your HRV dropped to 52. Try bed by 10:30."), \
+             patch("engine.gateway.scheduler._gather_context", return_value={}), \
+             patch("engine.gateway.scheduler._user_local_now") as mock_now, \
+             patch("engine.gateway.scheduler._get_eligible_persons") as mock_persons, \
+             patch("engine.gateway.scheduler._audit_scheduler"):
+
+            mock_persons.return_value = [
+                {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+                 "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+            ]
+            from zoneinfo import ZoneInfo
+            mock_now.return_value = datetime(2026, 4, 2, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+            _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        row = db_with_baseline.execute("SELECT * FROM coaching_outcome").fetchone()
+        assert row is not None
+        # Should have extracted hrv as the metric
+        assert db_with_baseline.execute(
+            "SELECT metric_key FROM coaching_outcome WHERE person_id = 'andrew-001'"
+        ).fetchone()[0] == "hrv"
+
+    def test_no_hypothesis_when_no_metric(self, db_with_baseline):
+        from unittest.mock import patch
+        from engine.gateway.scheduler import _run_schedule
+
+        with patch("engine.gateway.scheduler._compose_message", return_value="Great job staying consistent!"), \
+             patch("engine.gateway.scheduler._gather_context", return_value={}), \
+             patch("engine.gateway.scheduler._user_local_now") as mock_now, \
+             patch("engine.gateway.scheduler._get_eligible_persons") as mock_persons, \
+             patch("engine.gateway.scheduler._audit_scheduler"):
+
+            mock_persons.return_value = [
+                {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+                 "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+            ]
+            from zoneinfo import ZoneInfo
+            mock_now.return_value = datetime(2026, 4, 2, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+            _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        count = db_with_baseline.execute("SELECT COUNT(*) FROM coaching_outcome").fetchone()[0]
+        assert count == 0

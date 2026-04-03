@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -21,6 +22,34 @@ VALID_METRIC_KEYS = frozenset({
     "calories_bmr", "stress_avg", "floors", "distance_m", "max_hr", "min_hr",
     "vo2_max", "body_battery", "zone2_min",
 })
+
+# Ordered list of (regex_pattern, metric_key, hypothesis_template).
+# First match wins. Patterns are checked case-insensitively.
+_METRIC_PATTERNS: list[tuple[str, str, str]] = [
+    (r"\bdeep sleep\b", "deep_sleep_hrs", "improve deep sleep duration"),
+    (r"\bsleep\b", "sleep_hrs", "improve sleep duration"),
+    (r"\bhrv\b|heart rate variability", "hrv", "improve HRV"),
+    (r"\brhr\b|resting heart rate", "rhr", "reduce resting heart rate"),
+    (r"\bzone\s*2\b", "zone2_min", "increase zone 2 minutes"),
+    (r"\bsteps?\b|\bwalk\b", "steps", "increase daily step count"),
+    (r"\bbody battery\b", "body_battery", "improve body battery"),
+    (r"\bstress\b", "stress_avg", "reduce stress levels"),
+    (r"\bvo2\s*max\b", "vo2_max", "improve VO2 max"),
+    (r"\bcalories?\b", "calories_total", "improve caloric intake"),
+]
+
+
+def extract_hypothesis(message: str) -> dict | None:
+    """Extract a behavior change hypothesis from a coaching message.
+
+    Returns {"hypothesis": str, "metric_key": str} or None if no measurable
+    metric is referenced.
+    """
+    lower = message.lower()
+    for pattern, metric_key, hypothesis in _METRIC_PATTERNS:
+        if re.search(pattern, lower):
+            return {"hypothesis": hypothesis, "metric_key": metric_key}
+    return None
 
 
 def _compute_baseline(db: sqlite3.Connection, person_id: str, metric_key: str) -> float | None:
