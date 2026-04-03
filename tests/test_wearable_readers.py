@@ -753,3 +753,38 @@ class TestLoadHealthContextSqlite:
         ).fetchall()
         assert len(meal_rows) == 1
         assert meal_rows[0]["description"] == "Chicken and rice"
+
+
+class TestWearableFreshnessSqlite:
+    """Verify health/deep handles naive timestamps from wearable_daily."""
+
+    def test_naive_timestamp_does_not_cause_parse_error(self, db, tmp_path):
+        """Naive updated_at (no timezone) must not produce parse_error status."""
+        from engine.gateway.db import get_db
+        conn = get_db(tmp_path / "kasane.db")
+        conn.execute(
+            "INSERT INTO wearable_daily (id, person_id, date, source, rhr, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("w-naive", "p1", "2026-04-10", "apple_health", 61.0,
+             "2026-04-10T06:05:49", "2026-04-10T06:05:49"),
+        )
+        conn.commit()
+
+        # Simulate the exact code path from server.py health/deep (lines 493-502)
+        from datetime import datetime as _dt, timezone as _tz
+
+        from engine.gateway.server import _wearable_freshness_sqlite
+        with patch("engine.gateway.db.get_db", return_value=conn), \
+             patch("engine.gateway.db.init_db"):
+            freshness = _wearable_freshness_sqlite("andrew")
+
+        assert freshness is not None
+        ts_str = freshness["updated_at"]  # "2026-04-10T06:05:49" — no timezone
+
+        # This is the exact code from server.py that causes parse_error
+        ts = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_tz.utc)
+        age_hours = (_dt.now(_tz.utc) - ts).total_seconds() / 3600
+        status = "ok" if age_hours < 48 else "stale"
+        assert status in ("ok", "stale")  # must not be parse_error

@@ -493,6 +493,8 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
                     try:
                         from datetime import datetime as _dt, timezone as _tz
                         ts = _dt.fromisoformat(freshness["updated_at"].replace("Z", "+00:00"))
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=_tz.utc)
                         age_hours = (_dt.now(_tz.utc) - ts).total_seconds() / 3600
                         apple_health[uid] = {
                             "status": "ok" if age_hours < 48 else "stale",
@@ -509,10 +511,12 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
                         data = _json.loads(ah_file.read_text())
                         last_updated = data.get("last_updated", "")
                         if last_updated:
-                            from datetime import datetime as _dt
+                            from datetime import datetime as _dt, timezone as _tz2
                             try:
                                 ts = _dt.fromisoformat(last_updated.replace("Z", "+00:00"))
-                                age_hours = (datetime.now().astimezone() - ts).total_seconds() / 3600
+                                if ts.tzinfo is None:
+                                    ts = ts.replace(tzinfo=_tz2.utc)
+                                age_hours = (_dt.now(_tz2.utc) - ts).total_seconds() / 3600
                                 apple_health[uid] = {
                                     "status": "ok" if age_hours < 48 else "stale",
                                     "last_sync_hours_ago": round(age_hours, 1),
