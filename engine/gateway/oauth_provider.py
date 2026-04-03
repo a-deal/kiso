@@ -164,7 +164,12 @@ class KisoOAuthProvider:
             (authorization_code, client.client_id),
         ).fetchone()
         if not row:
+            logger.warning(
+                "OAuth code lookup failed: code=%s... client=%s",
+                authorization_code[:10], client.client_id,
+            )
             return None
+        logger.info("OAuth code loaded: client=%s person=%s", client.client_id, row["person_id"])
         return KisoAuthorizationCode(
             code=row["code"],
             client_id=row["client_id"],
@@ -181,6 +186,10 @@ class KisoOAuthProvider:
         self, client: OAuthClientInformationFull, authorization_code: KisoAuthorizationCode
     ) -> OAuthToken:
         person_id = authorization_code.person_id
+        logger.info(
+            "OAuth token exchange: client=%s person=%s scopes=%s",
+            client.client_id, person_id, authorization_code.scopes,
+        )
 
         # Generate tokens
         access_token = secrets.token_urlsafe(32)

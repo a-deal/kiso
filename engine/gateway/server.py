@@ -831,7 +831,7 @@ button:hover {{ background: #333; }}
         # Create auth code
         from engine.gateway.oauth_provider import KisoOAuthProvider
         provider = KisoOAuthProvider()
-        import asyncio
+        logger.info("OAuth consent: person=%s client=%s redirect=%s", person_id, client_id, redirect_uri)
         auth_code = await provider.create_authorization_code(
             client_id=client_id,
             code_challenge=code_challenge,
