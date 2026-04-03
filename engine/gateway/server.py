@@ -225,6 +225,8 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
     from .v1_api import register_v1_routes
     from .focus_plan_api import router as focus_plan_router
     from .scheduler import register_scheduler_routes
+    from .twilio_sms import create_twilio_webhook
+    from .voice_bridge import register_voice_routes
 
     # Kasane v1 API (must come before the {tool_name} wildcard)
     register_v1_routes(app)
@@ -234,6 +236,13 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
 
     # Deterministic scheduler (must come before the {tool_name} wildcard)
     register_scheduler_routes(app)
+
+    # Twilio SMS webhook (must come before the {tool_name} wildcard)
+    twilio_handler = create_twilio_webhook(config)
+    app.post("/api/webhooks/twilio")(twilio_handler)
+
+    # Voice bridge: Twilio + OpenAI Realtime API (must come before wildcard)
+    register_voice_routes(app, config)
 
     # Explicit routes MUST come before the {tool_name} wildcard
     app.get("/api/tools")(api_list_tools)

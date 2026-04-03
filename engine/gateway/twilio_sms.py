@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -250,7 +251,6 @@ def create_twilio_webhook(config):
                      user_id or "unknown", body[:100])
 
         # Forward to OpenClaw agent (fire and forget in background)
-        import threading
         threading.Thread(
             target=_forward_to_openclaw,
             args=(from_phone, body, user_id),
