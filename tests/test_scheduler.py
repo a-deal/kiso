@@ -242,7 +242,7 @@ class TestRunSchedule:
             yield mock_ts
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Test morning brief message")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True, "data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -293,7 +293,7 @@ class TestRunSchedule:
         assert "not Friday" in result["results"][0]["reason"]
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Weekly review")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"score": {}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -310,7 +310,7 @@ class TestRunSchedule:
         assert result["results"][0]["status"] == "dry_run"
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "sent", "message_id": 123})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -328,7 +328,7 @@ class TestRunSchedule:
         mock_send.assert_called_once_with("whatsapp", "+14152009584", "Brief")
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "error", "error": "timeout"})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -345,7 +345,7 @@ class TestRunSchedule:
         assert result["results"][0]["status"] == "failed"
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -383,7 +383,7 @@ class TestRunSchedule:
         assert "bad timezone" in result["results"][0]["reason"]
 
     @patch("engine.gateway.scheduler._compose_message", side_effect=Exception("API rate limit"))
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -405,7 +405,7 @@ class TestRunSchedule:
 
 class TestMultiTimezone:
     @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -467,7 +467,7 @@ class TestConversationIngestion:
     """Scheduled messages must be written to conversation_message so Milo has context."""
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Your HRV is 71ms. Focus on sleep tonight.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True, "data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "sent", "message_id": "abc123"})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -493,7 +493,7 @@ class TestConversationIngestion:
         assert row[4] == "milo-scheduler"  # sender_name identifies source
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Test message")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -510,7 +510,7 @@ class TestConversationIngestion:
         assert row[0] == 0, "dry_run should not write to conversation_message"
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Test message")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "error", "error": "timeout"})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -544,7 +544,7 @@ class TestConversationDedup:
             yield mock_ts
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Good morning! Here's your brief.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "sent", "message_id": "abc"})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -675,7 +675,7 @@ class TestMeasureOutcomesWiring:
     """measure_outcomes runs during morning brief and via standalone endpoint."""
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Morning brief")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -694,7 +694,7 @@ class TestMeasureOutcomesWiring:
         mock_measure.assert_called_once()
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Evening checkin")
-    @patch("engine.gateway.scheduler._gather_context", return_value={})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")

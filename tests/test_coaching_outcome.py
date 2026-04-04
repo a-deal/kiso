@@ -496,12 +496,22 @@ class TestHypothesisWiring:
         from unittest.mock import patch, MagicMock
         from engine.gateway.scheduler import _run_schedule
 
+        _context_with_data = {
+            "checkin": {
+                "data_available": {"garmin": True, "wearable_daily": True},
+                "score": {"coverage": 6},
+            }
+        }
         with patch("engine.gateway.scheduler._compose_message", return_value="Your HRV dropped to 52. Try bed by 10:30."), \
-             patch("engine.gateway.scheduler._gather_context", return_value={}), \
+             patch("engine.gateway.scheduler._gather_context", return_value=_context_with_data), \
+             patch("engine.gateway.scheduler._get_token_store") as mock_ts, \
              patch("engine.gateway.scheduler._user_local_now") as mock_now, \
              patch("engine.gateway.scheduler._get_eligible_persons") as mock_persons, \
              patch("engine.gateway.scheduler._audit_scheduler"):
 
+            ts = MagicMock()
+            ts.has_token.return_value = True
+            mock_ts.return_value = ts
             mock_persons.return_value = [
                 {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
                  "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},

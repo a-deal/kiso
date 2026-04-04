@@ -194,6 +194,41 @@ def validate_coaching_claims(message: str, person_id: str, db) -> list[str]:
     return warnings
 
 
+# --- Pre-compose gate ---
+
+
+def has_composable_data(context_data: dict) -> bool:
+    """Check if context has real health data worth composing a message from.
+
+    Returns False when the user has zero data (no wearable, no manual logs).
+    In that case, the scheduler should send a hardcoded onboarding message
+    instead of paying for a Sonnet call to narrate emptiness.
+    """
+    checkin = context_data.get("checkin")
+    if not checkin:
+        return False
+
+    # Check if any data source is available
+    data_available = checkin.get("data_available", {})
+    if any(data_available.values()):
+        return True
+
+    # Check coverage score as fallback
+    score = checkin.get("score", {})
+    if score.get("coverage", 0) > 0:
+        return True
+
+    return False
+
+
+_ONBOARDING_MESSAGE = (
+    "Hey {name}. I don't have any health data for you yet, "
+    "so I'm holding off on daily check-ins until we're connected. "
+    "Once your wearable is linked, I'll start pulling your numbers "
+    "and we can pick your anchor habit together."
+)
+
+
 # --- Anchor habit lookup ---
 
 
@@ -460,20 +495,25 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
         # Gather health context
         context_data = _gather_context(schedule_type, user_id)
 
-        # Look up anchor habit for prompt construction
-        anchor_habit = None
-        try:
-            anchor_habit = get_anchor_habit(db, person_id)
-        except Exception as e:
-            logger.debug("Anchor habit lookup failed for %s: %s", user_id, e)
+        # Pre-compose gate: skip Sonnet for zero-data users
+        if not has_composable_data(context_data):
+            message = _ONBOARDING_MESSAGE.format(name=name)
+            logger.info("Zero-data user %s: sending onboarding message (skipping Sonnet)", user_id)
+        else:
+            # Look up anchor habit for prompt construction
+            anchor_habit = None
+            try:
+                anchor_habit = get_anchor_habit(db, person_id)
+            except Exception as e:
+                logger.debug("Anchor habit lookup failed for %s: %s", user_id, e)
 
-        # Compose message
-        try:
-            message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit)
-        except Exception as e:
-            logger.error("Failed to compose message for %s: %s", user_id, e)
-            results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
-            continue
+            # Compose message
+            try:
+                message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit)
+            except Exception as e:
+                logger.error("Failed to compose message for %s: %s", user_id, e)
+                results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
+                continue
 
         # Pre-send validation: flag metrics whose source changed recently
         try:

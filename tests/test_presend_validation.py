@@ -192,7 +192,7 @@ class TestValidationInScheduler:
             yield mock_ts
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Your VO2 max dropped to 32. Concerning decline.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True, "data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -215,7 +215,7 @@ class TestValidationInScheduler:
         assert "vo2_max" in msg.lower()
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Great sleep last night, 7.5 hours.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True, "data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -236,7 +236,7 @@ class TestValidationInScheduler:
         assert "source change" not in msg.lower()
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Your VO2 max is 47. Looking strong.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True, "data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
