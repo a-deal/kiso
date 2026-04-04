@@ -759,6 +759,23 @@ def _log_supplements(stack: str | None = None, supplements: list[str] | None = N
         })
     write_csv(path, rows, fieldnames=fieldnames)
 
+    # SQLite write
+    import uuid as _uuid
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.now().isoformat()
+        for item in items:
+            rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:supplement:{date}:{item['name']}"))
+            db.execute(
+                "INSERT OR IGNORE INTO supplement_log (id, person_id, date, name, dose, stack, source, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rid, person_id, date, item["name"], item.get("dose", ""), stack or "individual", "mcp", now, now),
+            )
+        db.commit()
+
     logged_names = [i["name"] for i in items]
     return {"logged": True, "date": date, "count": len(items), "supplements": logged_names}
 
@@ -1292,6 +1309,23 @@ def _log_medication(
         "source": "mcp",
     })
     write_csv(path, rows, fieldnames=fieldnames)
+
+    # SQLite write
+    import uuid as _uuid
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.now().isoformat()
+        rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:medication:{date}:{name}"))
+        db.execute(
+            "INSERT OR IGNORE INTO medication_log (id, person_id, date, name, dose, route, notes, source, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, person_id, date, name, dose, route or "", notes or "", "mcp", now, now),
+        )
+        db.commit()
+
     return {"logged": True, "date": date, "name": name, "dose": dose, "route": route or ""}
 
 

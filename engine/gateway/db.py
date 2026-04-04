@@ -316,6 +316,31 @@ CREATE TABLE IF NOT EXISTS habit_log (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS supplement_log (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    name TEXT NOT NULL,
+    dose TEXT,
+    stack TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS medication_log (
+    id TEXT PRIMARY KEY,
+    person_id TEXT NOT NULL REFERENCES person(id),
+    date TEXT NOT NULL,
+    name TEXT NOT NULL,
+    dose TEXT NOT NULL,
+    route TEXT,
+    notes TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS wearable_token (
     id TEXT PRIMARY KEY,
     person_id TEXT REFERENCES person(id),
