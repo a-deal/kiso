@@ -21,7 +21,6 @@ from pathlib import Path
 
 logger = logging.getLogger("health-engine.token_store")
 
-_LEGACY_BASE_DIR = Path(os.path.expanduser("~/.config/health-engine/tokens"))
 _KEY_PATH = Path(os.path.expanduser("~/.config/health-engine/token.key"))
 # Garth needs a real directory to load/dump tokens. We use a stable per-user
 # path so garth's token refresh can persist across calls within a process.
@@ -69,13 +68,12 @@ def _now_iso() -> str:
 class TokenStore:
     """Manage wearable auth tokens per service and user.
 
-    Reads/writes tokens in SQLite (wearable_token table).
-    Falls back to legacy file paths for migration.
+    Primary storage: SQLite (wearable_token table).
+    Garmin tokens fall back to garth-cache directory for import.
     """
 
-    def __init__(self, base_dir: str | Path | None = None):
-        # Legacy base_dir kept for backward compat during migration
-        self._legacy_dir = Path(base_dir) if base_dir else _LEGACY_BASE_DIR
+    def __init__(self, base_dir=None):
+        # base_dir is accepted but ignored (legacy compat for callers).
         self._fernet = _get_fernet()
 
     def _encrypt(self, data: bytes) -> bytes:
@@ -139,45 +137,15 @@ class TokenStore:
         ).fetchall()
         return [r["token_name"] for r in rows]
 
-    # --- Legacy file migration ---
-
-    def _legacy_token_dir(self, service: str, user_id: str) -> Path:
-        return self._legacy_dir / service / user_id
-
-    def _migrate_from_files(self, user_id: str, service: str):
-        """One-time migration: copy file tokens into SQLite, then leave files as backup."""
-        legacy_dir = self._legacy_token_dir(service, user_id)
-        if not legacy_dir.exists() or legacy_dir.is_symlink():
-            return
-        if self._db_has_tokens(user_id, service):
-            return  # Already migrated
-
-        migrated = 0
-        for fpath in legacy_dir.iterdir():
-            if not fpath.is_file():
-                continue
-            raw = fpath.read_bytes()
-            # Decrypt if file was Fernet-encrypted, then re-encrypt for DB
-            if self._fernet and raw.startswith(b"gAAAAA"):
-                raw = self._fernet.decrypt(raw)
-            self._db_save_token(user_id, service, fpath.name, raw)
-            migrated += 1
-
-        if migrated:
-            logger.info("Migrated %d token files for %s/%s from disk to SQLite", migrated, service, user_id)
-
     # --- Public API ---
 
-    def save_token(self, service: str, user_id: str, data: dict) -> Path:
-        """Save token data to SQLite. Returns a (legacy) directory path for backward compat."""
+    def save_token(self, service: str, user_id: str, data: dict):
+        """Save token data to SQLite."""
         raw = json.dumps(data, indent=2).encode()
         self._db_save_token(user_id, service, "token.json", raw)
-        # Return legacy path for any callers that expect it
-        return self._legacy_token_dir(service, user_id)
 
     def load_token(self, service: str, user_id: str) -> dict | None:
-        """Load token data from SQLite. Falls back to files + migrates."""
-        self._migrate_from_files(user_id, service)
+        """Load token data from SQLite."""
         raw = self._db_load_token(user_id, service, "token.json")
         if raw is None:
             return None
@@ -186,11 +154,9 @@ class TokenStore:
     def has_token(self, service: str, user_id: str) -> bool:
         """Check if tokens exist for a service/user combo.
 
-        Checks SQLite first (after legacy migration). For Garmin, falls back
-        to garth-cache directory: if tokens exist there but not in SQLite,
-        imports them and returns True.
+        For Garmin, falls back to garth-cache directory: if tokens exist
+        there but not in SQLite, imports them and returns True.
         """
-        self._migrate_from_files(user_id, service)
         if self._db_has_tokens(user_id, service):
             return True
         # Fallback: garth-cache may have tokens from direct garth usage
@@ -220,14 +186,12 @@ class TokenStore:
 
         Garmin tokens are stored as garth dumps (oauth1_token.json,
         oauth2_token.json). This method:
-        1. Migrates legacy file tokens to SQLite if needed
-        2. Writes SQLite tokens to a cache directory for garth to read
-        3. Returns the cache directory path
+        1. Writes SQLite tokens to a cache directory for garth to read
+        2. Returns the cache directory path
 
         After garth modifies tokens (e.g. refresh), call sync_garmin_tokens()
         to write changes back to SQLite.
         """
-        self._migrate_from_files(user_id, "garmin")
 
         cache_dir = _GARTH_CACHE_DIR / user_id
         cache_dir.mkdir(parents=True, exist_ok=True)

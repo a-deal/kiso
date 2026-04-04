@@ -147,24 +147,13 @@ def _get_token_store():
 def _garmin_token_dir(user_id: str | None = None) -> str | None:
     """Resolve per-user Garmin token directory. Returns None if no tokens exist.
 
-    Uses SQLite-backed TokenStore (with automatic migration from legacy files).
-    NEVER falls back to another user's tokens.
+    Uses SQLite-backed TokenStore. NEVER falls back to another user's tokens.
     """
     ts = _get_token_store()
     uid = user_id if user_id and user_id != "default" else "default"
 
-    if uid != "default":
-        if ts.has_token("garmin", uid):
-            return str(ts.garmin_token_dir(uid))
-        return None
-
-    # Legacy CLI path (no user_id context)
-    if ts.has_token("garmin", "default"):
-        return str(ts.garmin_token_dir("default"))
-    # Check old-style legacy path as absolute fallback for CLI
-    legacy = Path(os.path.expanduser("~/.config/health-engine/garmin-tokens"))
-    if legacy.exists() and any(legacy.iterdir()):
-        return str(legacy)
+    if ts.has_token("garmin", uid):
+        return str(ts.garmin_token_dir(uid))
     return None
 
 

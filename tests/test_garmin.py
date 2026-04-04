@@ -466,13 +466,12 @@ class TestGarminClientTokenStore:
     def store(self, tmp_path, test_db, monkeypatch):
         garth_cache = tmp_path / "garth-cache"
         monkeypatch.setattr("engine.gateway.token_store._GARTH_CACHE_DIR", garth_cache)
-        monkeypatch.setattr("engine.gateway.token_store._LEGACY_BASE_DIR", tmp_path / "legacy")
         monkeypatch.setattr(
             "engine.gateway.token_store._get_db",
             lambda: __import__("engine.gateway.db", fromlist=["get_db"]).get_db(test_db),
         )
         from engine.gateway.token_store import TokenStore
-        return TokenStore(base_dir=tmp_path / "legacy")
+        return TokenStore()
 
     def test_init_accepts_token_store(self, store):
         """GarminClient.__init__ accepts token_store and user_id params."""

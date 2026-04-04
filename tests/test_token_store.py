@@ -35,22 +35,19 @@ def test_db(tmp_path, monkeypatch):
 @pytest.fixture
 def store_encrypted(token_dir, key_path, test_db, monkeypatch):
     """TokenStore with Fernet encryption enabled."""
-    monkeypatch.setattr("engine.gateway.token_store._LEGACY_BASE_DIR", token_dir)
     monkeypatch.setattr("engine.gateway.token_store._KEY_PATH", key_path)
     monkeypatch.delenv("HE_TOKEN_KEY", raising=False)
     from engine.gateway.token_store import TokenStore
-    return TokenStore(base_dir=token_dir)
+    return TokenStore()
 
 
 @pytest.fixture
 def store_no_crypto(token_dir, test_db, monkeypatch):
     """TokenStore with cryptography unavailable."""
-    monkeypatch.setattr("engine.gateway.token_store._LEGACY_BASE_DIR", token_dir)
-
     import engine.gateway.token_store as mod
     monkeypatch.setattr(mod, "_get_fernet", lambda: None)
     from engine.gateway.token_store import TokenStore
-    store = TokenStore(base_dir=token_dir)
+    store = TokenStore()
     store._fernet = None
     return store
 
@@ -84,17 +81,6 @@ def test_encrypted_blob_is_not_plaintext(store_encrypted, test_db):
     assert raw.startswith(b"gAAAAA")  # Fernet prefix
 
 
-def test_legacy_file_migration(store_encrypted, token_dir):
-    """Plaintext JSON files from before SQLite migration can be loaded via migration."""
-    td = token_dir / "google-calendar" / "legacy"
-    td.mkdir(parents=True)
-    data = {"access_token": "old_token", "refresh_token": "old_refresh"}
-    (td / "token.json").write_text(json.dumps(data))
-
-    loaded = store_encrypted.load_token("google-calendar", "legacy")
-    assert loaded == data
-
-
 def test_no_crypto_roundtrip(store_no_crypto):
     """Without cryptography, tokens still save and load via SQLite."""
     data = {"access_token": "plain", "refresh_token": "text"}
@@ -114,9 +100,8 @@ def test_load_missing_returns_none(store_encrypted):
     assert store_encrypted.load_token("nonexistent", "nobody") is None
 
 
-def test_key_auto_generated(key_path, token_dir, monkeypatch):
+def test_key_auto_generated(key_path, monkeypatch):
     """Key file is auto-generated on first use."""
-    monkeypatch.setattr("engine.gateway.token_store._LEGACY_BASE_DIR", token_dir)
     monkeypatch.setattr("engine.gateway.token_store._KEY_PATH", key_path)
     monkeypatch.delenv("HE_TOKEN_KEY", raising=False)
 
@@ -129,12 +114,11 @@ def test_key_auto_generated(key_path, token_dir, monkeypatch):
     assert mode == "600"
 
 
-def test_env_var_key(token_dir, monkeypatch):
+def test_env_var_key(monkeypatch):
     """HE_TOKEN_KEY env var is used when set."""
     from cryptography.fernet import Fernet
     key = Fernet.generate_key()
     monkeypatch.setenv("HE_TOKEN_KEY", key.decode())
-    monkeypatch.setattr("engine.gateway.token_store._LEGACY_BASE_DIR", token_dir)
 
     from engine.gateway.token_store import _get_fernet
     f = _get_fernet()
@@ -191,3 +175,34 @@ def test_has_token_garth_cache_non_garmin(store_encrypted, garth_cache_dir):
 
     # oura should NOT use garth-cache fallback
     assert not store_encrypted.has_token("oura", "andrew")
+
+
+# --- Step 4: Legacy removal verification ---
+
+
+def test_no_legacy_migration_attribute(store_encrypted):
+    """TokenStore should not have _migrate_from_files."""
+    assert not hasattr(store_encrypted, "_migrate_from_files")
+
+
+def test_no_legacy_base_dir_constant():
+    """_LEGACY_BASE_DIR should not exist in token_store module."""
+    import engine.gateway.token_store as mod
+    assert not hasattr(mod, "_LEGACY_BASE_DIR")
+
+
+def test_has_token_only_checks_sqlite_and_garth_cache(store_encrypted, token_dir):
+    """has_token should NOT check legacy file paths."""
+    # Create a token file at the old legacy location
+    legacy = token_dir / "oura" / "andrew"
+    legacy.mkdir(parents=True)
+    (legacy / "token.json").write_text('{"token": "legacy"}')
+
+    # Should not find it since legacy migration is removed
+    assert not store_encrypted.has_token("oura", "andrew")
+
+
+def test_save_token_returns_none(store_encrypted):
+    """save_token should not return a legacy directory path."""
+    result = store_encrypted.save_token("svc", "u1", {"token": "val"})
+    assert result is None
