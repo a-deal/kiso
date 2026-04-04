@@ -266,9 +266,9 @@ def append_wearable_connect_link(
     """
     try:
         ts = token_store or _get_token_store()
-        has_garmin = ts.has_token(user_id, "garmin")
-        has_oura = ts.has_token(user_id, "oura")
-        has_whoop = ts.has_token(user_id, "whoop")
+        has_garmin = ts.has_token("garmin", user_id)
+        has_oura = ts.has_token("oura", user_id)
+        has_whoop = ts.has_token("whoop", user_id)
 
         if has_garmin or has_oura or has_whoop:
             return message

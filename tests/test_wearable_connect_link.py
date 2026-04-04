@@ -69,7 +69,7 @@ class TestAppendWearableConnectLink:
         """If user has Garmin tokens, don't append anything."""
         message = "Good morning Mike. HRV is 52."
         mock_ts = MagicMock()
-        mock_ts.has_token.side_effect = lambda uid, svc: svc == "garmin"
+        mock_ts.has_token.side_effect = lambda svc, uid: svc == "garmin"
 
         result = append_wearable_connect_link(
             message, "mike", mock_ts,
@@ -82,7 +82,7 @@ class TestAppendWearableConnectLink:
         """Any wearable connected means no link appended."""
         message = "Good morning Mike."
         mock_ts = MagicMock()
-        mock_ts.has_token.side_effect = lambda uid, svc: svc == "oura"
+        mock_ts.has_token.side_effect = lambda svc, uid: svc == "oura"
 
         result = append_wearable_connect_link(
             message, "mike", mock_ts,
@@ -119,11 +119,37 @@ class TestAppendWearableConnectLink:
         assert result == message
 
 
+class TestTokenStoreArgOrder:
+    """Verify has_token is called with (service, user_id), not swapped."""
+
+    def test_has_token_arg_order_with_real_store(self, db):
+        """TokenStore.has_token(service, user_id) should not raise with correct arg order."""
+        from engine.gateway.token_store import TokenStore
+        ts = TokenStore()
+        # Should return False cleanly, not error
+        assert ts.has_token("garmin", "mike") is False
+        assert ts.has_token("oura", "mike") is False
+        assert ts.has_token("whoop", "mike") is False
+
+    def test_append_uses_correct_arg_order(self, db):
+        """append_wearable_connect_link should call has_token(service, user_id)."""
+        from engine.gateway.token_store import TokenStore
+        ts = TokenStore()
+        message = "Test message"
+        result = append_wearable_connect_link(
+            message, "mike", ts,
+            base_url="https://auth.mybaseline.health",
+            hmac_secret="test-secret",
+        )
+        # No tokens exist, so link should be appended
+        assert "/auth/garmin" in result
+
+
 class TestSchedulerWearableLinkIntegration:
     """Integration: _run_schedule appends connect link for users without wearables."""
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Good morning Mike. No data available yet.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -147,7 +173,7 @@ class TestSchedulerWearableLinkIntegration:
         assert "user=mike" in msg
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Good morning Mike. HRV is 52, sleep was 7.1 hours.")
-    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"test": True}})
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
@@ -161,7 +187,7 @@ class TestSchedulerWearableLinkIntegration:
 
         with patch("engine.gateway.scheduler._get_token_store") as mock_get_ts:
             mock_ts = MagicMock()
-            mock_ts.has_token.side_effect = lambda uid, svc: svc == "garmin"
+            mock_ts.has_token.side_effect = lambda svc, uid: svc == "garmin"
             mock_get_ts.return_value = mock_ts
 
             result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
