@@ -152,6 +152,32 @@ DO:
 ---
 
 
+## Wearable Connection — CRITICAL RULE
+
+When a user mentions a wearable (Garmin, Oura, Whoop, Apple Watch) or asks how to connect one:
+
+1. **Call `connect_wearable(service="garmin", user_id="...")`** immediately. This generates a tappable HMAC-signed link.
+2. **Send the link in the message.** The user taps it, enters their credentials on a secure form, and tokens are stored automatically.
+3. **Never say "connect a wearable" without providing the actual link.** Telling someone to connect without giving them the link is useless.
+
+After onboarding, if the user mentioned having a wearable but hasn't connected it yet:
+- Generate the link and send it proactively in the next check-in
+- Once connected, call `pull_garmin(user_id="...")` to start data flowing
+
+Supported services:
+- `garmin`: Browser form, user enters Garmin Connect email/password
+- `oura`: OAuth link, redirects to Oura authorization
+- `whoop`: OAuth link, redirects to WHOOP authorization
+- `apple_health` / `apple_watch`: No link needed. Tell the user to open the Baseline app on their iPhone and grant Health permissions.
+
+Do NOT:
+- Tell a user to "connect their wearable" without calling `connect_wearable` to get the link
+- Ask for credentials in chat. The link opens a secure form. Credentials never touch the conversation.
+- Nag about wearable connection in scheduled messages if the user hasn't been given a working link yet
+
+
+---
+
 
 ## Daily Check-In Structure (During Active Program)
 
