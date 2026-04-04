@@ -194,6 +194,20 @@ def validate_coaching_claims(message: str, person_id: str, db) -> list[str]:
     return warnings
 
 
+# --- Anchor habit lookup ---
+
+
+def get_anchor_habit(db, person_id: str) -> str | None:
+    """Return the user's current anchor habit title, or None if they don't have one."""
+    row = db.execute(
+        "SELECT primary_anchor FROM focus_plan "
+        "WHERE person_id = ? AND deleted_at IS NULL AND primary_anchor IS NOT NULL "
+        "ORDER BY created_at DESC LIMIT 1",
+        (person_id,),
+    ).fetchone()
+    return row["primary_anchor"] if row else None
+
+
 # --- Wearable connect link (post-composition) ---
 
 
@@ -241,9 +255,15 @@ def append_wearable_connect_link(
 # --- Message composition via Sonnet ---
 
 
-def _compose_message(schedule_type: str, user_name: str, context_data: dict) -> str:
+def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None) -> str:
     """Call Anthropic Sonnet to compose a coaching message."""
     from anthropic import Anthropic
+
+    # Evening check-in: adapt based on whether an anchor habit exists
+    if anchor_habit:
+        evening_habit_line = f"2) Ask about their anchor habit: \"{anchor_habit}\", "
+    else:
+        evening_habit_line = "2) Skip anchor habit (none set yet). Suggest picking one small daily habit together. "
 
     prompts = {
         "morning_brief": (
@@ -255,7 +275,7 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict) -> 
         ),
         "evening_checkin": (
             f"You are Milo, a direct and warm health coach. Compose an evening check-in for {user_name}. "
-            "Include: 1) Active program status if any, 2) Ask about their anchor habit, "
+            f"Include: 1) Active program status if any, {evening_habit_line}"
             "3) Any meals left to log, 4) Tonight's protocol reminder if applicable. "
             "Keep it to 3-4 sentences. No greetings, no sign-offs."
         ),
@@ -440,9 +460,16 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
         # Gather health context
         context_data = _gather_context(schedule_type, user_id)
 
+        # Look up anchor habit for prompt construction
+        anchor_habit = None
+        try:
+            anchor_habit = get_anchor_habit(db, person_id)
+        except Exception as e:
+            logger.debug("Anchor habit lookup failed for %s: %s", user_id, e)
+
         # Compose message
         try:
-            message = _compose_message(schedule_type, name, context_data)
+            message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit)
         except Exception as e:
             logger.error("Failed to compose message for %s: %s", user_id, e)
             results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
