@@ -2968,11 +2968,17 @@ def _ingest_health_snapshot(
                 return e[key]
         return None
 
+    # Apple Health reports SDNN; scoring tables use RMSSD. For short-term
+    # resting measurements RMSSD ≈ SDNN * 0.7 (Shaffer & Ginsberg 2017).
+    _SDNN_TO_RMSSD = 0.7
+    hrv_sdnn_avg = _rolling_avg("hrv_sdnn")
+    hrv_rmssd_est = round(hrv_sdnn_avg * _SDNN_TO_RMSSD, 1) if hrv_sdnn_avg is not None else None
+
     latest = {
         "last_updated": ts,
         "source": "apple_health_shortcut",
         "resting_hr": _rolling_avg("resting_hr"),
-        "hrv_rmssd_avg": _rolling_avg("hrv_sdnn"),  # Map SDNN into the scoring field
+        "hrv_rmssd_avg": hrv_rmssd_est,
         "daily_steps_avg": _rolling_avg("steps"),
         "sleep_duration_avg": _rolling_avg("sleep_hours"),
         "vo2_max": _latest_val("vo2_max"),
@@ -2980,6 +2986,7 @@ def _ingest_health_snapshot(
         "zone2_min_per_week": None,  # Not available from Shortcuts
         "metadata": {
             "hrv_method": "SDNN",
+            "hrv_sdnn_to_rmssd_factor": _SDNN_TO_RMSSD,
             "source_detail": "ios_shortcut",
             "entries_in_series": len(series),
             "rolling_window": len(recent),

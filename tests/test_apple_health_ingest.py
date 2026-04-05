@@ -71,8 +71,9 @@ class TestIngestHealthSnapshot:
         latest = json.loads((data_dir / "apple_health_latest.json").read_text())
         assert latest["source"] == "apple_health_shortcut"
         assert latest["resting_hr"] == 54.2
-        assert latest["hrv_rmssd_avg"] == 42.5  # SDNN mapped to this field
+        assert latest["hrv_rmssd_avg"] == 29.7  # SDNN 42.5 * 0.7 conversion factor
         assert latest["metadata"]["hrv_method"] == "SDNN"
+        assert latest["metadata"]["hrv_sdnn_to_rmssd_factor"] == 0.7
 
     def test_partial_metrics(self, data_dir):
         """Only some fields present. Should ingest what's there."""

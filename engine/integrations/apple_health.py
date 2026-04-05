@@ -131,11 +131,17 @@ class AppleHealthParser:
         """Aggregate parsed records into scoring-compatible metrics."""
         records = handler.records
 
+        # Apple Health reports SDNN; scoring tables use RMSSD. For short-term
+        # resting measurements RMSSD ≈ SDNN * 0.7 (Shaffer & Ginsberg 2017).
+        _SDNN_TO_RMSSD = 0.7
+        hrv_sdnn = self._avg_hrv(records)
+        hrv_rmssd_est = round(hrv_sdnn * _SDNN_TO_RMSSD, 1) if hrv_sdnn is not None else None
+
         result = {
             "last_updated": datetime.now().isoformat(timespec="seconds"),
             "source": "apple_health",
             "resting_hr": self._avg_rhr(records),
-            "hrv_rmssd_avg": self._avg_hrv(records),
+            "hrv_rmssd_avg": hrv_rmssd_est,
             "daily_steps_avg": self._avg_daily_steps(records),
             "vo2_max": self._latest_vo2(records),
             "sleep_duration_avg": None,
@@ -143,6 +149,7 @@ class AppleHealthParser:
             "zone2_min_per_week": None,  # v1: skip zone2 estimation
             "metadata": {
                 "hrv_method": "SDNN",
+                "hrv_sdnn_to_rmssd_factor": _SDNN_TO_RMSSD,
             },
         }
 
