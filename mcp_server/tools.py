@@ -640,6 +640,44 @@ def _log_weight(weight_lbs: float, date: str | None = None, user_id: str | None 
     return {"logged": True, "date": date, "weight_lbs": storage_lbs}
 
 
+def _delete_weight(date: str | None = None, user_id: str | None = None) -> dict:
+    """Delete a weight entry for a specific date."""
+    if not date:
+        return {"deleted": False, "error": "date is required"}
+
+    # CSV delete
+    data_dir = _data_dir(user_id)
+    path = data_dir / "weight_log.csv"
+    rows = read_csv(path)
+    before = len(rows)
+    rows = [r for r in rows if r.get("date") != date]
+    if len(rows) < before:
+        fieldnames = ["date", "weight_lbs", "source", "waist_in"]
+        if rows:
+            write_csv(path, rows, fieldnames=fieldnames)
+        else:
+            # write_csv skips empty lists; write header-only file
+            import csv
+            with open(path, "w", newline="") as f:
+                csv.DictWriter(f, fieldnames=fieldnames).writeheader()
+
+    # SQLite delete
+    deleted_sqlite = False
+    person_id = _resolve_person_id(user_id)
+    if person_id:
+        import uuid as _uuid
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        rid = str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"{person_id}:weight_entry:{date}"))
+        cursor = db.execute("DELETE FROM weight_entry WHERE id = ?", (rid,))
+        db.commit()
+        deleted_sqlite = cursor.rowcount > 0
+
+    deleted = (len(rows) < before) or deleted_sqlite
+    return {"deleted": deleted, "date": date, "user_id": user_id}
+
+
 def _log_bp(systolic: int, diastolic: int, date: str | None = None, user_id: str | None = None) -> dict:
     import uuid as _uuid
     date = date or datetime.now().strftime("%Y-%m-%d")
@@ -3662,6 +3700,7 @@ TOOL_REGISTRY = {
     "score": _score,
     "get_protocols": _get_protocols,
     "log_weight": _log_weight,
+    "delete_weight": _delete_weight,
     "log_bp": _log_bp,
     "log_habits": _log_habits,
     "log_supplements": _log_supplements,
@@ -3742,6 +3781,11 @@ def register_tools(mcp: FastMCP):
     def log_weight(weight_lbs: float, date: str | None = None, user_id: str | None = None) -> dict:
         """Log a weight measurement. Date defaults to today."""
         return _log_weight(weight_lbs, date, _effective_user_id(user_id))
+
+    @mcp.tool()
+    def delete_weight(date: str, user_id: str | None = None) -> dict:
+        """Delete a weight entry for a specific date. Use when a user reports a bad weight reading."""
+        return _delete_weight(date, _effective_user_id(user_id))
 
     @mcp.tool()
     def log_bp(systolic: int, diastolic: int, date: str | None = None, user_id: str | None = None) -> dict:
