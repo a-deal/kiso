@@ -1,8 +1,8 @@
-"""Tests for deterministic wearable connect link in scheduled messages.
+"""Tests for wearable connect nudge in scheduled messages.
 
 When a user has no wearable tokens, the scheduler should append a
-connect link to the composed message. This is post-composition,
-deterministic (not dependent on Sonnet including it).
+text nudge (not a link) to the composed message. Links expire before
+users read async messages, so we prompt them to reply instead.
 """
 
 import uuid
@@ -50,20 +50,19 @@ def db_with_mike(db):
 class TestAppendWearableConnectLink:
     """Unit tests for append_wearable_connect_link."""
 
-    def test_appends_link_when_no_tokens(self, db_with_mike):
-        """If user has no wearable tokens, append the connect link."""
+    def test_appends_nudge_when_no_tokens(self, db_with_mike):
+        """If user has no wearable tokens, append a text nudge (not a link)."""
         message = "Good morning Mike. Sleep data unavailable."
         mock_ts = MagicMock()
         mock_ts.has_token.return_value = False
 
         result = append_wearable_connect_link(
             message, "mike", mock_ts,
-            base_url="https://auth.mybaseline.health",
-            hmac_secret="test-secret",
         )
-        assert "auth.mybaseline.health" in result
-        assert "/auth/garmin" in result
         assert message in result  # original message preserved
+        assert "connect" in result.lower()  # nudge to reply
+        assert "/auth/garmin" not in result  # no HMAC link
+        assert "state=" not in result  # no HMAC state
 
     def test_no_append_when_garmin_connected(self, db_with_mike):
         """If user has Garmin tokens, don't append anything."""
@@ -91,19 +90,18 @@ class TestAppendWearableConnectLink:
         )
         assert result == message
 
-    def test_link_is_hmac_signed(self, db_with_mike):
-        """The appended link should contain an HMAC state parameter."""
+    def test_no_hmac_link_in_nudge(self, db_with_mike):
+        """The nudge must not contain any HMAC link (they expire before users read async messages)."""
         message = "Morning check-in."
         mock_ts = MagicMock()
         mock_ts.has_token.return_value = False
 
         result = append_wearable_connect_link(
             message, "mike", mock_ts,
-            base_url="https://auth.mybaseline.health",
-            hmac_secret="test-secret",
         )
-        assert "state=" in result
-        assert "user=mike" in result
+        assert "state=" not in result
+        assert "auth.mybaseline.health" not in result
+        assert "http" not in result.split(message)[1]  # nothing after message is a URL
 
     def test_failure_returns_original_message(self, db_with_mike):
         """If token check raises, return the original message untouched."""
@@ -138,11 +136,10 @@ class TestTokenStoreArgOrder:
         message = "Test message"
         result = append_wearable_connect_link(
             message, "mike", ts,
-            base_url="https://auth.mybaseline.health",
-            hmac_secret="test-secret",
         )
-        # No tokens exist, so link should be appended
-        assert "/auth/garmin" in result
+        # No tokens exist, so nudge should be appended (not a link)
+        assert "connect" in result.lower()
+        assert "/auth/garmin" not in result
 
 
 class TestSchedulerWearableLinkIntegration:
@@ -153,8 +150,8 @@ class TestSchedulerWearableLinkIntegration:
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
     @patch("engine.gateway.scheduler._audit_scheduler")
-    def test_dry_run_includes_connect_link(self, mock_audit, mock_persons, mock_now, mock_context, mock_compose, db_with_mike):
-        """Scheduled message for user without wearable should include connect link."""
+    def test_dry_run_includes_nudge_not_link(self, mock_audit, mock_persons, mock_now, mock_context, mock_compose, db_with_mike):
+        """Scheduled message for user without wearable should include text nudge, not HMAC link."""
         mock_persons.return_value = [
             {"id": "mike-001", "name": "Mike", "health_engine_user_id": "mike",
              "channel": "whatsapp", "channel_target": "+14155551234", "timezone": "America/Los_Angeles"},
@@ -169,8 +166,9 @@ class TestSchedulerWearableLinkIntegration:
             result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
 
         msg = result["results"][0]["message"]
-        assert "/auth/garmin" in msg
-        assert "user=mike" in msg
+        assert "connect" in msg.lower()  # text nudge
+        assert "/auth/garmin" not in msg  # no HMAC link
+        assert "state=" not in msg  # no HMAC state
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Good morning Mike. HRV is 52, sleep was 7.1 hours.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})

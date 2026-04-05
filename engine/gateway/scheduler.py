@@ -259,10 +259,11 @@ def append_wearable_connect_link(
     base_url: str = "",
     hmac_secret: str = "",
 ) -> str:
-    """Append a Garmin connect link if the user has no wearable tokens.
+    """Append a text nudge if the user has no wearable tokens.
 
-    Deterministic post-composition step. The link is appended directly,
-    not passed to Sonnet as a hint.
+    No HMAC links: they expire before users read async messages.
+    Instead, prompt the user to reply so the live agent can generate
+    a fresh link on demand.
     """
     try:
         ts = token_store or _get_token_store()
@@ -273,17 +274,9 @@ def append_wearable_connect_link(
         if has_garmin or has_oura or has_whoop:
             return message
 
-        # Generate HMAC-signed link
-        import hashlib, hmac, time as _time
-        bucket = str(int(_time.time()) // 3600)
-        payload = f"{user_id}:garmin:{bucket}"
-        sig = hmac.new(hmac_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
-        state = f"{payload}:{sig}"
-        link = f"{base_url}/auth/garmin?user={user_id}&state={state}"
-
-        return message + f"\n\nConnect your Garmin here: {link}"
+        return message + "\n\nReply 'connect' and I'll help you link your wearable."
     except Exception as e:
-        logger.debug("Wearable connect link failed for %s: %s", user_id, e)
+        logger.debug("Wearable connect nudge failed for %s: %s", user_id, e)
         return message
 
 
@@ -550,17 +543,13 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
         except Exception as e:
             logger.warning("Pre-send validation failed for %s: %s", user_id, e)
 
-        # Append wearable connect link if user has no wearable tokens
+        # Append wearable connect nudge if user has no wearable tokens
         try:
-            from engine.gateway.config import load_gateway_config
-            gw_config = load_gateway_config()
             message = append_wearable_connect_link(
                 message, user_id, _get_token_store(),
-                base_url=gw_config.base_url,
-                hmac_secret=gw_config.hmac_secret,
             )
         except Exception as e:
-            logger.warning("Wearable connect link failed for %s: %s", user_id, e)
+            logger.warning("Wearable connect nudge failed for %s: %s", user_id, e)
 
         # Extract and record behavior change hypothesis (best-effort)
         try:
