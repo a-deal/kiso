@@ -907,10 +907,11 @@ async def auth_refresh(request: Request):
 
     person_id = row["person_id"]
 
-    # Revoke old tokens for this person+client
+    # Revoke only the used refresh token (not all tokens, to avoid race conditions
+    # when multiple sync requests refresh simultaneously)
     db.execute(
-        "UPDATE oauth_token SET revoked = 1 WHERE person_id = ? AND client_id = 'kasane-ios'",
-        (person_id,),
+        "UPDATE oauth_token SET revoked = 1 WHERE token = ?",
+        (refresh_token,),
     )
 
     # Issue new pair

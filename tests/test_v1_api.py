@@ -889,14 +889,15 @@ class TestAppleAuth:
         new_access = refresh_resp.json()["access_token"]
         assert new_access != old_access
 
-        # Old access token should no longer work
+        # Old access token still works until expiry (we only revoke the
+        # used refresh token, not all tokens, to handle concurrent syncs)
         old_resp = client.get(
             "/api/v1/persons",
             headers={"Authorization": f"Bearer {old_access}"},
         )
-        assert old_resp.status_code == 403
+        assert old_resp.status_code == 200
 
-        # New access token should work
+        # New access token should also work
         new_resp = client.get(
             "/api/v1/persons",
             headers={"Authorization": f"Bearer {new_access}"},
