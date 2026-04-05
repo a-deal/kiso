@@ -158,27 +158,13 @@ class GarminClient:
                 return client
             except Exception as e:
                 print(f"Cached token auth failed: {e}", file=sys.stderr)
-                # Never fall through to SSO login from automated context.
-                # That causes rate limits. Require interactive re-auth.
-                if not self.email or not self.password:
-                    raise RuntimeError(
-                        f"Token auth failed: {e}. Run `python3 cli.py auth garmin` to re-authenticate."
-                    ) from e
+                raise RuntimeError(
+                    f"Token auth failed: {e}. Run `python3 cli.py auth garmin` or use auth_garmin MCP tool to re-authenticate."
+                ) from e
 
-        if not self.email or not self.password:
-            raise RuntimeError(
-                "No tokens found. Run `python3 cli.py auth garmin` to authenticate."
-            )
-
-        print("Logging in to Garmin Connect...")
-        client = Garmin(self.email, self.password)
-        client.login()
-        self.token_dir.mkdir(parents=True, exist_ok=True)
-        client.garth.dump(str(self.token_dir))
-        self._sync_to_store()
-        print("Authenticated and token cached.")
-        self._client = client
-        return client
+        raise RuntimeError(
+            "No Garmin tokens found. Run `python3 cli.py auth garmin` or use auth_garmin MCP tool to authenticate."
+        )
 
     @property
     def client(self):

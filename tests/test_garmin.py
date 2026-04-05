@@ -601,6 +601,43 @@ class TestGarminClientTokenStore:
         assert client.token_store is None
 
 
+class TestConnectNeverHitsSSO:
+    """connect() must never fall through to SSO login, even with credentials set."""
+
+    def test_connect_raises_when_cached_tokens_fail_with_credentials(self, tmp_path):
+        """If cached tokens fail and email/password are set, connect() should
+        raise RuntimeError, NOT fall through to Garmin().login().
+
+        This prevents the 4h garmin-pull cron from hammering Garmin SSO
+        when tokens expire and credentials happen to be in config.
+        """
+        token_dir = tmp_path / "tokens"
+        token_dir.mkdir()
+        # Put a bad token file so the cached path is attempted and fails
+        (token_dir / "oauth1_token.json").write_text('{"bad": "token"}')
+
+        client = GarminClient(
+            email="test@example.com",
+            password="secret",
+            token_dir=str(token_dir),
+        )
+
+        # Make garth.load succeed but profile check fail (simulates corrupted cache)
+        mock_garth = type("MockGarth", (), {
+            "load": lambda self, d: None,
+            "oauth2_token": type("T", (), {"expired": False, "refresh_expired": False})(),
+            "profile": {},  # empty profile triggers RuntimeError
+        })()
+        mock_garmin_obj = type("MockGarmin", (), {
+            "garth": mock_garth,
+            "display_name": None,
+        })()
+
+        with patch("garminconnect.Garmin", return_value=mock_garmin_obj):
+            with pytest.raises(RuntimeError, match="Token auth failed"):
+                client.connect()
+
+
 class TestSleepTimeTimezone:
     """Verify sleep_start/sleep_end are extracted correctly from Garmin timestamps.
 
