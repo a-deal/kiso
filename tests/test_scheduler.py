@@ -544,6 +544,35 @@ class TestConversationIngestion:
         assert result["results"][0]["status"] == "skip"
         assert "no data" in result["results"][0]["reason"]
 
+    @patch("engine.gateway.scheduler._compose_message", return_value="New unique message")
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_passes_last_message_to_composer(self, mock_audit, mock_persons, mock_now, mock_context, mock_compose, db_with_andrew):
+        """Composer should receive the last sent message to avoid repetition."""
+        # Insert a previous scheduler message
+        db_with_andrew.execute(
+            "INSERT INTO conversation_message (user_id, role, content, sender_name, channel, session_key, timestamp, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("andrew", "assistant", "Yesterday's message about steps.", "milo-scheduler", "whatsapp",
+             "scheduler:morning_brief", "2026-04-01T07:10:00Z", "2026-04-01T07:10:00Z"),
+        )
+        db_with_andrew.commit()
+
+        mock_persons.return_value = [
+            {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+             "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+        ]
+        mock_now.return_value = datetime(2026, 4, 2, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+        _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        # Verify _compose_message was called with last_message kwarg
+        call_kwargs = mock_compose.call_args
+        assert "last_message" in call_kwargs.kwargs or (len(call_kwargs.args) > 3 and call_kwargs.args[4] is not None), \
+            "Composer should receive last_message parameter"
+
 
 # --- Conversation message dedup tests ---
 

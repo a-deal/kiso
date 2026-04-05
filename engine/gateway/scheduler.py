@@ -290,7 +290,7 @@ def append_wearable_connect_link(
 # --- Message composition via Sonnet ---
 
 
-def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None) -> str:
+def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None, last_message: str | None = None) -> str:
     """Call Anthropic Sonnet to compose a coaching message."""
     from anthropic import Anthropic
 
@@ -326,12 +326,17 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict, anc
         "You are Milo, a health coaching agent. You speak like a trainer who knows the user's numbers. "
         "Be direct, warm, data-grounded. Reference actual data when available. "
         "Never use em dashes. Use periods, commas, or colons instead. "
-        "If data is missing or empty, acknowledge it briefly and focus on what you do know. "
+        "IMPORTANT: Never announce missing data. If sleep data is missing, don't mention sleep. "
+        "Coach from what you have, not from what you don't. "
         "IMPORTANT: If vo2_max_source differs from wearable_source (e.g. vo2 from apple_health but "
         "other metrics from garmin), note that the VO2 number comes from a different device/algorithm. "
         "Different wearables use different VO2 estimation methods, so a source change is NOT a fitness "
         "decline. Do not alarm on VO2 drops that coincide with a source change."
     )
+
+    user_content = f"{prompts[schedule_type]}\n\nHealth data:\n{json.dumps(context_data, indent=2, default=str)}"
+    if last_message:
+        user_content += f"\n\nLast message sent to this user (do NOT repeat the same primary nudge or talking points):\n{last_message}"
 
     client = Anthropic()
     response = client.messages.create(
@@ -340,7 +345,7 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict, anc
         system=system_prompt,
         messages=[{
             "role": "user",
-            "content": f"{prompts[schedule_type]}\n\nHealth data:\n{json.dumps(context_data, indent=2, default=str)}"
+            "content": user_content,
         }],
     )
     return response.content[0].text
@@ -508,9 +513,23 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
             except Exception as e:
                 logger.debug("Anchor habit lookup failed for %s: %s", user_id, e)
 
+            # Fetch last scheduled message to avoid repetition
+            last_message = None
+            try:
+                prev = db.execute(
+                    "SELECT content FROM conversation_message "
+                    "WHERE user_id = ? AND role = 'assistant' AND sender_name LIKE 'milo-%' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (user_id,),
+                ).fetchone()
+                if prev:
+                    last_message = prev["content"]
+            except Exception as e:
+                logger.debug("Last message lookup failed for %s: %s", user_id, e)
+
             # Compose message
             try:
-                message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit)
+                message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit, last_message=last_message)
             except Exception as e:
                 logger.error("Failed to compose message for %s: %s", user_id, e)
                 results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
