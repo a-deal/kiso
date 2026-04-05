@@ -1621,7 +1621,7 @@ def _connect_garmin(user_id: str | None = None) -> dict:
         freshness = garmin.get("last_updated")
 
     if not has_tokens:
-        hint = "No Garmin tokens found. Use auth_garmin tool with your email and password."
+        hint = "No Garmin tokens found. Use connect_wearable(service='garmin', user_id=...) to generate a sign-in link."
     elif not has_data:
         hint = "Tokens cached but no data yet. Use pull_garmin tool to fetch metrics."
     else:
