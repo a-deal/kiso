@@ -1547,7 +1547,7 @@ def _auth_garmin(user_id: str | None = None, email: str | None = None, password:
         if result.get("authenticated"):
             uid = user_id if user_id and user_id != "default" else "default"
             ts = _get_token_store()
-            ts.sync_garmin_tokens(uid)
+            ts.save_garmin_tokens(uid, token_dir)
         return result
 
     # Browser auth: opens local page (for users with Mac Mini access)
