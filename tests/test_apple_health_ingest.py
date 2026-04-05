@@ -69,7 +69,7 @@ class TestIngestHealthSnapshot:
 
         # Check latest file
         latest = json.loads((data_dir / "apple_health_latest.json").read_text())
-        assert latest["source"] == "apple_health_shortcut"
+        assert latest["source"] == "apple_health"
         assert latest["resting_hr"] == 54.2
         assert latest["hrv_rmssd_avg"] == 29.7  # SDNN 42.5 * 0.7 conversion factor
         assert latest["metadata"]["hrv_method"] == "SDNN"

@@ -3028,7 +3028,7 @@ def _ingest_health_snapshot(
 
     latest = {
         "last_updated": ts,
-        "source": "apple_health_shortcut",
+        "source": "apple_health",
         "resting_hr": _rolling_avg("resting_hr"),
         "hrv_rmssd_avg": hrv_rmssd_est,
         "daily_steps_avg": _rolling_avg("steps"),
@@ -3039,7 +3039,7 @@ def _ingest_health_snapshot(
         "metadata": {
             "hrv_method": "SDNN",
             "hrv_sdnn_to_rmssd_factor": _SDNN_TO_RMSSD,
-            "source_detail": "ios_shortcut",
+            "source_detail": "baseline_sync",
             "entries_in_series": len(series),
             "rolling_window": len(recent),
         },
