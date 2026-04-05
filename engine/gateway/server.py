@@ -548,12 +548,15 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
         """Serve the Garmin credential form."""
         verified = _verify_state(state)
         if verified is None:
+            logger.warning("garmin_auth_form state_invalid user=%s", user)
             return HTMLResponse(_error_page("Invalid or expired link. Ask your coach for a new one."), status_code=403)
 
         user_id, service = verified
         if service != "garmin" or user_id != user:
+            logger.warning("garmin_auth_form param_mismatch user=%s service=%s", user, service)
             return HTMLResponse(_error_page("Invalid link parameters."), status_code=403)
 
+        logger.info("garmin_auth_form served user_id=%s", user_id)
         return _garmin_auth_page(user_id, state)
 
     # Exponential backoff for Garmin auth: tracks per-user attempt history.
@@ -572,8 +575,10 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
         state: str = Form(...),
     ):
         """Process Garmin credentials, cache tokens."""
+        logger.info("garmin_auth_submit attempt user_id=%s", user_id)
         verified = _verify_state(state)
         if verified is None:
+            logger.warning("garmin_auth_submit state_invalid user_id=%s", user_id)
             return JSONResponse({"authenticated": False, "error": "Invalid or expired link."}, status_code=403)
 
         now = time.time()
@@ -586,6 +591,10 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
             mins = wait // 60
             secs = wait % 60
             time_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+            logger.warning(
+                "garmin_auth_submit rate_limited user_id=%s wait=%ds consecutive_429s=%d",
+                user_id, wait, auth_state.get("consecutive_429s", 0),
+            )
             return JSONResponse({
                 "authenticated": False,
                 "error": f"Garmin rate limit active. Please wait {time_str} before trying again.",
@@ -598,6 +607,7 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
 
         if result.get("authenticated"):
             _garmin_auth_state.pop(user_id, None)
+            logger.info("garmin_auth_submit success user_id=%s", user_id)
         elif result.get("rate_limited"):
             consecutive_429s = auth_state.get("consecutive_429s", 0) + 1
             new_cooldown = min(
@@ -612,12 +622,20 @@ def create_app(config: GatewayConfig | None = None) -> "FastAPI":
             }
             result["retry_after_secs"] = int(new_cooldown)
             result["consecutive_429s"] = consecutive_429s
+            logger.warning(
+                "garmin_auth_submit garmin_429 user_id=%s consecutive=%d cooldown=%ds",
+                user_id, consecutive_429s, int(new_cooldown),
+            )
         else:
             _garmin_auth_state[user_id] = {
                 **auth_state,
                 "last_attempt": now,
                 "cooldown": _GARMIN_NORMAL_COOLDOWN,
             }
+            logger.warning(
+                "garmin_auth_submit failed user_id=%s error_type=%s",
+                user_id, result.get("error_type", "unknown"),
+            )
 
         return JSONResponse(result)
 
