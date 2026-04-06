@@ -6,7 +6,10 @@ table with phone, email, channel, channel_target, timezone, role.
 
 Safe to run multiple times (updates only, never deletes).
 
-Usage:
+WARNING: Run on Mac Mini (production) only. Do not run on laptop.
+There is no local development database — tests use tmp_path fixtures.
+
+Usage (on Mac Mini):
     python3 scripts/seed_users.py
     python3 scripts/seed_users.py --dry-run
 """

@@ -4,8 +4,11 @@
 Links to health_engine_user_id='default' so Milo can read both
 Kasane data (SQLite) and health data (CSVs) for the same person.
 
-Usage:
-    cd /Users/adeal/src/health-engine
+WARNING: Run on Mac Mini (production) only. Do not run on laptop.
+There is no local development database — tests use tmp_path fixtures.
+
+Usage (on Mac Mini):
+    cd ~/src/health-engine
     python3 scripts/seed_kasane_db.py
 """
 

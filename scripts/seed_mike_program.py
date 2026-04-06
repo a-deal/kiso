@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Seed Mike's April 2026 workout program into kasane.db.
 
-Run from project root:
+WARNING: Run on Mac Mini (production) only. Do not run on laptop.
+There is no local development database — tests use tmp_path fixtures.
+
+Usage (on Mac Mini):
+    cd ~/src/health-engine
     python3 scripts/seed_mike_program.py
 """
 import sys

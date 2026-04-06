@@ -43,6 +43,14 @@ Milo (agent) ----> MCP tools ----> SQLite + CSVs (data/users/<user_id>/)
 - CSVs (`data/users/<user_id>/`): Legacy weight, meals, labs, BP. Being migrated to SQLite.
 - `get_person_context` merges both into one read
 
+**Database — HARD RULE:**
+- **Production DB lives on Mac Mini only.** There is no local development database on the laptop.
+- **Tests use `tmp_path` fixtures** that create fresh in-memory DBs. They never touch a persistent local DB.
+- **Seed scripts (`scripts/seed_*.py`) run on Mac Mini only.** Running them on the laptop silently creates a diverged local DB with stale data. Don't do it.
+- **To query production data:** `ssh mac-mini "cd ~/src/health-engine && .venv/bin/python -c '...'"` or hit the API via curl.
+- **If `init_db()` warns about creating a new local DB**, stop and ask why. You probably need to query Mac Mini instead.
+- **Never draw conclusions from local DB queries** about what users said, what data exists, or what state production is in. The laptop DB is empty by design.
+
 **Deployment:**
 - Gunicorn + 2 uvicorn workers on Mac Mini (M4 Pro), port 18800. Zero-downtime HUP reload.
 - Cloudflare Tunnel for HTTPS (`auth.mybaseline.health`)
@@ -249,3 +257,4 @@ Source: mariozechner.at/posts/2026-03-25-thoughts-on-slowing-the-fuck-down/
 - Silent skips are silent failures. Every scheduler skip path needs a WARNING log if it persists beyond a threshold. The zero-data gate silently skipped Mike for 3 days. (learned 2026-04-05)
 - Don't infer what you can ask. Timezone was never collected during onboarding, just defaulted to Pacific. Area codes don't correlate with location. Ask the user. (learned 2026-04-05)
 - /health/deep checks only work if the cron actually hits /health/deep. Verify the alert path end-to-end after adding new health checks. (learned 2026-04-05)
+- Read agent instructions (SOUL.md, workspace files) before debugging agent behavior. The code may be correct while the spec is wrong. SOUL.md Rule #0 literally said "Send 'On it.' before tool calls" and caused 10+ noise messages per day. (learned 2026-04-05)

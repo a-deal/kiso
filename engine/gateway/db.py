@@ -7,9 +7,12 @@ DB file: data/kasane.db
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from pathlib import Path
+
+logger = logging.getLogger("health-engine.db")
 
 _DB_NAME = "kasane.db"
 _local = threading.local()
@@ -530,7 +533,19 @@ CREATE TABLE IF NOT EXISTS oauth_invite (
 
 
 def init_db(db_path: Path | str | None = None):
-    """Create all tables if they don't exist, then run migrations."""
+    """Create all tables if they don't exist, then run migrations.
+
+    When no explicit db_path is given and the default DB doesn't exist,
+    logs a warning so developers don't silently create an empty local DB
+    that diverges from production (Mac Mini).  Tests always pass an
+    explicit tmp_path, so this guard only fires during local dev.
+    """
+    if db_path is None and not _db_path().exists():
+        logger.warning(
+            "Creating new local DB at %s. This is NOT production data. "
+            "Query Mac Mini for real user data: ssh mac-mini",
+            _db_path(),
+        )
     conn = get_db(db_path)
     conn.executescript(_SCHEMA)
     conn.commit()
