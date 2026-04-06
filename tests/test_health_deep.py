@@ -99,11 +99,13 @@ class TestHealthDeepSourceChanges:
             "VALUES (?, ?, ?, ?, ?)",
             ("p1", "Andrew", "andrew", now_str, now_str),
         )
-        # Insert wearable data with source change
+        # Insert wearable data with source change (relative dates so test doesn't go stale)
+        from datetime import timedelta
+        today = datetime.now(timezone.utc).date()
         for i, (date, source, vo2) in enumerate([
-            ("2026-03-28", "garmin", 47.0),
-            ("2026-03-29", "garmin", 47.0),
-            ("2026-04-01", "apple_health", 32.3),
+            (str(today - timedelta(days=4)), "garmin", 47.0),
+            (str(today - timedelta(days=3)), "garmin", 47.0),
+            (str(today - timedelta(days=1)), "apple_health", 32.3),
         ]):
             rid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"p1:wearable_daily:{date}:{source}"))
             db.execute(
