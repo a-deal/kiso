@@ -49,9 +49,9 @@ fi
 if [ -n "$FAILURES" ]; then
     MSG="GATEWAY ALERT $(date +%H:%M):$(echo -e "$FAILURES")"
     echo "$MSG"
-    # Alert via Telegram
+    # Alert via WhatsApp
     export PATH="/opt/homebrew/bin:$HOME/Library/pnpm:$PATH"
-    openclaw agent --to 6460316634 --channel telegram --message "$MSG" 2>/dev/null
+    openclaw agent --to +14152009584 --channel whatsapp --message "$MSG" 2>/dev/null
     exit 1
 else
     echo "ok $(date)"
