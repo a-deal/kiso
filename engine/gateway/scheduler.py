@@ -434,7 +434,7 @@ def _send_and_ingest(db, user_id: str, channel: str, target: str, message: str) 
 def _get_eligible_persons(db):
     """Get all persons with channel data configured."""
     rows = db.execute(
-        "SELECT id, name, health_engine_user_id, channel, channel_target, timezone "
+        "SELECT id, name, health_engine_user_id, channel, channel_target, timezone, created_at "
         "FROM person "
         "WHERE deleted_at IS NULL AND channel IS NOT NULL AND channel_target IS NOT NULL "
         "AND health_engine_user_id IS NOT NULL",
@@ -498,10 +498,39 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
         # Gather health context
         context_data = _gather_context(schedule_type, user_id)
 
-        # Skip users with no health data entirely — don't spam onboarding templates
+        # Zero-data users: nudge if new (<7 days), warn if stuck (>7 days)
         if not has_composable_data(context_data):
-            logger.info("Skipping zero-data user %s: no data to coach on", user_id)
-            results.append({"user_id": user_id, "status": "skip", "reason": "no data"})
+            created_at_str = person.get("created_at", "")
+            try:
+                created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                days_since = (datetime.now(created_at.tzinfo or None) - created_at).days
+            except (ValueError, TypeError):
+                days_since = 999  # Can't parse, treat as old
+
+            if days_since <= 7:
+                message = _ONBOARDING_MESSAGE.format(name=name)
+                message = append_wearable_connect_link(message, user_id, _get_token_store())
+                logger.info("Sending onboarding nudge to %s (day %d)", user_id, days_since)
+            else:
+                logger.warning(
+                    "scheduler zero_data_stuck user_id=%s days=%d",
+                    user_id, days_since,
+                )
+                results.append({"user_id": user_id, "status": "skip", "reason": "no data, stuck >7 days"})
+                continue
+
+            # Onboarding message skips composition, goes straight to send/dedup
+            if dry_run:
+                _record_send(db, person_id, schedule_type, sent_date, status="dry_run", preview=message)
+                results.append({"user_id": user_id, "status": "dry_run", "channel": channel, "message": message})
+                continue
+
+            send_result = _send_via_openclaw(channel, target, message)
+            status = "sent" if send_result.get("status") != "error" else "failed"
+            _record_send(db, person_id, schedule_type, sent_date, status=status, preview=message)
+            if status == "sent":
+                _ingest_scheduled_message(db, user_id, channel, message, schedule_type)
+            results.append({"user_id": user_id, "status": status, "channel": channel, "message": message})
             continue
         else:
             # Look up anchor habit for prompt construction

@@ -861,6 +861,62 @@ class TestStrengthNoneHandling:
         assert result.clinical_zone == ""
 
 
+class TestOnboardingNudge:
+    """Zero-data users <7 days old should get an onboarding nudge, not a silent skip."""
+
+    @pytest.fixture(autouse=True)
+    def mock_wearable_connected(self):
+        with patch("engine.gateway.scheduler._get_token_store") as mock_ts:
+            ts = MagicMock()
+            ts.has_token.return_value = True
+            mock_ts.return_value = ts
+            yield mock_ts
+
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {}, "score": {"coverage": 0}}})
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_new_user_zero_data_gets_nudge(self, mock_audit, mock_persons, mock_now, mock_context, db_with_andrew):
+        """User created 2 days ago with zero data should get onboarding message."""
+        from datetime import timedelta
+        two_days_ago = (datetime.now() - timedelta(days=2)).isoformat()
+        mock_persons.return_value = [
+            {"id": "mike-001", "name": "Mike", "health_engine_user_id": "mike",
+             "channel": "whatsapp", "channel_target": "+14155551234",
+             "timezone": "America/Los_Angeles", "created_at": two_days_ago},
+        ]
+        mock_now.return_value = datetime(2026, 4, 5, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+        result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        r = result["results"][0]
+        assert r["status"] == "dry_run"
+        assert "connect" in r["message"].lower() or "wearable" in r["message"].lower()
+
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {}, "score": {"coverage": 0}}})
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_old_user_zero_data_skips_with_warning(self, mock_audit, mock_persons, mock_now, mock_context, db_with_andrew, caplog):
+        """User created 10 days ago with zero data should be skipped with WARNING."""
+        from datetime import timedelta
+        ten_days_ago = (datetime.now() - timedelta(days=10)).isoformat()
+        mock_persons.return_value = [
+            {"id": "mike-001", "name": "Mike", "health_engine_user_id": "mike",
+             "channel": "whatsapp", "channel_target": "+14155551234",
+             "timezone": "America/Los_Angeles", "created_at": ten_days_ago},
+        ]
+        mock_now.return_value = datetime(2026, 4, 5, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="kiso.scheduler"):
+            result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        r = result["results"][0]
+        assert r["status"] == "skip"
+        assert any("stuck" in rec.message or "zero_data" in rec.message for rec in caplog.records)
+
+
 class TestNullTimezone:
     """Scheduler should skip users with NULL timezone and log a warning."""
 
