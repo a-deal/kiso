@@ -132,3 +132,80 @@ class TestBriefingRebuild:
         """Return value should indicate briefing was refreshed."""
         result = _setup_profile(phq9_score=3, user_id="testuser")
         assert result.get("briefing_refreshed") is True
+
+
+class TestTimezone:
+    """setup_profile should accept timezone and persist it to the person table."""
+
+    @pytest.fixture
+    def user_dir_with_db(self, tmp_path, monkeypatch):
+        """Set up temp user directory + real SQLite DB with a person row."""
+        from engine.gateway.db import init_db, get_db, close_db
+        close_db()
+
+        data_root = tmp_path / "data" / "users" / "testuser"
+        data_root.mkdir(parents=True)
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        config_path = config_dir / "testuser" / "config.yaml"
+        config_path.parent.mkdir(parents=True)
+        initial = {"profile": {"age": 35, "sex": "M", "name": "Test"}, "targets": {}}
+        with open(config_path, "w") as f:
+            yaml.dump(initial, f)
+
+        monkeypatch.setattr("mcp_server.tools._config_path",
+                            lambda uid=None: config_path)
+        monkeypatch.setattr("mcp_server.tools._data_dir",
+                            lambda uid=None: data_root)
+        monkeypatch.setattr("engine.coaching.briefing.build_briefing",
+                            lambda cfg: {"score": {"coverage": 99}})
+
+        db_path = tmp_path / "data" / "kasane.db"
+        init_db(str(db_path))
+        db = get_db(str(db_path))
+
+        # Insert a person row
+        db.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, created_at, updated_at) "
+            "VALUES ('p-test', 'Test', 'testuser', '2026-04-01', '2026-04-01')",
+        )
+        db.commit()
+
+        # Patch _resolve_person_id to return our test person
+        monkeypatch.setattr("mcp_server.tools._resolve_person_id", lambda uid: "p-test")
+        # Patch DB access in setup_profile to use our test DB
+        monkeypatch.setattr("engine.gateway.db.get_db", lambda path=None: db)
+
+        yield {"config_path": config_path, "data_dir": data_root, "db": db}
+        close_db()
+
+    def test_setup_profile_accepts_timezone(self, user_dir_with_db):
+        """setup_profile(timezone='America/New_York') should persist to person table."""
+        result = _setup_profile(timezone="America/New_York", user_id="testuser")
+        assert result["saved"]
+
+        db = user_dir_with_db["db"]
+        row = db.execute(
+            "SELECT timezone FROM person WHERE id = 'p-test'",
+        ).fetchone()
+        assert row["timezone"] == "America/New_York"
+
+    def test_setup_profile_timezone_in_config(self, user_dir_with_db):
+        """Timezone should also be saved to config.yaml profile."""
+        _setup_profile(timezone="Europe/Moscow", user_id="testuser")
+
+        with open(user_dir_with_db["config_path"]) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["profile"]["timezone"] == "Europe/Moscow"
+
+    def test_setup_profile_no_timezone_leaves_db_unchanged(self, user_dir_with_db):
+        """Calling setup_profile without timezone should not touch the timezone column."""
+        _setup_profile(medications="none", user_id="testuser")
+
+        db = user_dir_with_db["db"]
+        row = db.execute(
+            "SELECT timezone FROM person WHERE id = 'p-test'",
+        ).fetchone()
+        # Schema default is NULL (not set yet). setup_profile without timezone shouldn't change it.
+        assert row["timezone"] is None

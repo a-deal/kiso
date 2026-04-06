@@ -59,6 +59,7 @@ class PersonCreate(CamelModel):
     family_history_json: str | None = None
     health_notes: str | None = None
     health_engine_user_id: str | None = None
+    timezone: str | None = None
 
 
 class PersonUpdate(CamelModel):
@@ -71,6 +72,7 @@ class PersonUpdate(CamelModel):
     family_history_json: str | None = None
     health_notes: str | None = None
     health_engine_user_id: str | None = None
+    timezone: str | None = None
 
 
 class PersonOut(CamelModel):

@@ -859,3 +859,38 @@ class TestStrengthNoneHandling:
         _apply_clinical(result, "rhr", "None", demo)
         # clinical_zone should remain at its default (empty string), not crash
         assert result.clinical_zone == ""
+
+
+class TestNullTimezone:
+    """Scheduler should skip users with NULL timezone and log a warning."""
+
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_null_timezone_skips_with_warning(self, mock_audit, mock_persons, db_with_andrew, caplog):
+        mock_persons.return_value = [
+            {"id": "new-001", "name": "NewUser", "health_engine_user_id": "newuser",
+             "channel": "whatsapp", "channel_target": "+15551234567", "timezone": None},
+        ]
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="kiso.scheduler"):
+            result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        assert result["results"][0]["status"] == "skip"
+        assert "no timezone" in result["results"][0]["reason"]
+        assert any("no_timezone" in r.message for r in caplog.records)
+
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_empty_string_timezone_skips(self, mock_audit, mock_persons, db_with_andrew, caplog):
+        mock_persons.return_value = [
+            {"id": "new-001", "name": "NewUser", "health_engine_user_id": "newuser",
+             "channel": "whatsapp", "channel_target": "+15551234567", "timezone": ""},
+        ]
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="kiso.scheduler"):
+            result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
+
+        assert result["results"][0]["status"] == "skip"
+        assert "no timezone" in result["results"][0]["reason"]

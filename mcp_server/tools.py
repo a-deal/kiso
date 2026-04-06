@@ -2111,6 +2111,7 @@ def _setup_profile(
     tobacco_use: str | None = None,
     equipment: list[str] | None = None,
     unit_system: str | None = None,
+    timezone: str | None = None,
     user_id: str | None = None,
 ) -> dict:
     cp = _config_path(user_id)
@@ -2179,19 +2180,31 @@ def _setup_profile(
         config.setdefault("profile", {})
         config["profile"]["unit_system"] = unit_system
 
+    if timezone is not None:
+        config.setdefault("profile", {})
+        config["profile"]["timezone"] = timezone
+
     with open(cp, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
-    # Persist unit_system to person table in SQLite
+    # Persist unit_system and/or timezone to person table in SQLite
+    updates = {}
     if unit_system is not None:
+        updates["unit_system"] = unit_system
+    if timezone is not None:
+        updates["timezone"] = timezone
+
+    if updates:
         person_id = _resolve_person_id(user_id)
         if person_id:
             from engine.gateway.db import get_db, init_db
             init_db()
             db = get_db()
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [datetime.now().isoformat(), person_id]
             db.execute(
-                "UPDATE person SET unit_system = ?, updated_at = ? WHERE id = ?",
-                (unit_system, datetime.now().isoformat(), person_id),
+                f"UPDATE person SET {set_clause}, updated_at = ? WHERE id = ?",
+                values,
             )
             db.commit()
 

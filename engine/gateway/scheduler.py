@@ -455,9 +455,14 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
         person_id = person["id"]
         user_id = person["health_engine_user_id"]
         name = person["name"]
-        tz_name = person["timezone"] or "America/Los_Angeles"
+        tz_name = person["timezone"]
         channel = person["channel"]
         target = person["channel_target"]
+
+        if not tz_name:
+            logger.warning("scheduler skip user_id=%s reason=no_timezone", user_id)
+            results.append({"user_id": user_id, "status": "skip", "reason": "no timezone set"})
+            continue
 
         try:
             local_now = _user_local_now(tz_name)

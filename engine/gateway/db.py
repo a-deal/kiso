@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS person (
     health_engine_user_id TEXT,
     phone TEXT,
     email TEXT,
-    timezone TEXT DEFAULT 'America/Los_Angeles',
+    timezone TEXT,
     role TEXT DEFAULT 'user',
     channel TEXT,
     channel_target TEXT,
@@ -650,7 +650,7 @@ def get_active_users(db_path: Path | str | None = None) -> list[dict]:
             "email": r["email"],
             "channel": r["channel"],
             "channel_target": r["channel_target"],
-            "timezone": r["timezone"] or "America/Los_Angeles",
+            "timezone": r["timezone"],
             "role": r["role"] or "user",
         }
         for r in rows
@@ -678,7 +678,7 @@ def get_user(user_id: str, db_path: Path | str | None = None) -> dict | None:
         "email": r["email"],
         "channel": r["channel"],
         "channel_target": r["channel_target"],
-        "timezone": r["timezone"] or "America/Los_Angeles",
+        "timezone": r["timezone"],
         "role": r["role"] or "user",
     }
 
