@@ -565,15 +565,22 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
                 results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
                 continue
 
-        # Outbound gate: check for system internals leaking into coaching messages
+        # Outbound gate: block messages with system internals leaking into coaching
         try:
             from engine.gateway.outbound_gate import validate_outbound
             gate_result = validate_outbound(message)
             if not gate_result.ok:
                 logger.warning(
-                    "outbound_gate flagged user_id=%s flags=%s details=%s",
-                    user_id, gate_result.flags, gate_result.details,
+                    "outbound_gate BLOCKED user_id=%s flags=%s details=%s preview=%s",
+                    user_id, gate_result.flags, gate_result.details, message[:200],
                 )
+                _record_send(db, person_id, schedule_type, sent_date,
+                             status="gate_blocked", preview=message)
+                results.append({
+                    "user_id": user_id, "status": "gate_blocked",
+                    "flags": gate_result.flags, "details": gate_result.details,
+                })
+                continue
         except Exception as e:
             logger.warning("Outbound gate check failed for %s: %s", user_id, e)
 

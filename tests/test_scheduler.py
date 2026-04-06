@@ -292,7 +292,7 @@ class TestRunSchedule:
         assert result["results"][0]["status"] == "skip"
         assert "not Friday" in result["results"][0]["reason"]
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Weekly review")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Weekly review: sleep averaged 6.8 hours, HRV trending up at 62.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -309,7 +309,7 @@ class TestRunSchedule:
 
         assert result["results"][0]["status"] == "dry_run"
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 7.2 hours last night. HRV at 58, solid recovery.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "sent", "message_id": 123})
     @patch("engine.gateway.scheduler._user_local_now")
@@ -325,9 +325,9 @@ class TestRunSchedule:
         result = _run_schedule("morning_brief", target_hour=7, dry_run=False)
 
         assert result["results"][0]["status"] == "sent"
-        mock_send.assert_called_once_with("whatsapp", "+14152009584", "Brief")
+        mock_send.assert_called_once_with("whatsapp", "+14152009584", "Sleep was 7.2 hours last night. HRV at 58, solid recovery.")
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 7.2 hours last night. HRV at 58, solid recovery.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "error", "error": "timeout"})
     @patch("engine.gateway.scheduler._user_local_now")
@@ -344,7 +344,47 @@ class TestRunSchedule:
 
         assert result["results"][0]["status"] == "failed"
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
+    @patch("engine.gateway.scheduler._compose_message",
+           return_value="System health check at 1:54 AM. Issues: mike stale 88h.")
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
+    @patch("engine.gateway.scheduler._send_via_openclaw")
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_gate_blocks_bad_message(self, mock_audit, mock_persons, mock_now, mock_send, mock_context, mock_compose, db_with_andrew):
+        """Outbound gate should BLOCK messages that fail validation, not just warn."""
+        mock_persons.return_value = [
+            {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+             "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+        ]
+        mock_now.return_value = datetime(2026, 4, 5, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+        result = _run_schedule("morning_brief", target_hour=7, dry_run=False)
+
+        assert result["results"][0]["status"] == "gate_blocked"
+        mock_send.assert_not_called()
+
+    @patch("engine.gateway.scheduler._compose_message",
+           return_value="On it.")
+    @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
+    @patch("engine.gateway.scheduler._send_via_openclaw")
+    @patch("engine.gateway.scheduler._user_local_now")
+    @patch("engine.gateway.scheduler._get_eligible_persons")
+    @patch("engine.gateway.scheduler._audit_scheduler")
+    def test_gate_blocks_short_process_narration(self, mock_audit, mock_persons, mock_now, mock_send, mock_context, mock_compose, db_with_andrew):
+        """15-char minimum should block process narration like 'On it.' from being sent."""
+        mock_persons.return_value = [
+            {"id": "andrew-001", "name": "Andrew", "health_engine_user_id": "andrew",
+             "channel": "whatsapp", "channel_target": "+14152009584", "timezone": "America/Los_Angeles"},
+        ]
+        mock_now.return_value = datetime(2026, 4, 5, 7, 10, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+        result = _run_schedule("morning_brief", target_hour=7, dry_run=False)
+
+        assert result["results"][0]["status"] == "gate_blocked"
+        mock_send.assert_not_called()
+
+    @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 7.2 hours last night. HRV at 58, solid recovery.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -404,7 +444,7 @@ class TestRunSchedule:
 
 
 class TestMultiTimezone:
-    @patch("engine.gateway.scheduler._compose_message", return_value="Brief")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 7.2 hours last night. HRV at 58, solid recovery.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -492,7 +532,7 @@ class TestConversationIngestion:
         assert row[3] == "whatsapp"     # channel
         assert row[4] == "milo-scheduler"  # sender_name identifies source
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Test message")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 6.5 hours. Recovery is lagging, prioritize an early bedtime tonight.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -509,7 +549,7 @@ class TestConversationIngestion:
         row = db_with_andrew.execute("SELECT COUNT(*) FROM conversation_message").fetchone()
         assert row[0] == 0, "dry_run should not write to conversation_message"
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Test message")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 6.5 hours. Recovery is lagging, prioritize an early bedtime tonight.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._send_via_openclaw", return_value={"status": "error", "error": "timeout"})
     @patch("engine.gateway.scheduler._user_local_now")
@@ -544,7 +584,7 @@ class TestConversationIngestion:
         assert result["results"][0]["status"] == "skip"
         assert "no data" in result["results"][0]["reason"]
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="New unique message")
+    @patch("engine.gateway.scheduler._compose_message", return_value="New unique message with enough length to pass the outbound gate check.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -720,7 +760,7 @@ class TestSchedulerRoutes:
 class TestMeasureOutcomesWiring:
     """measure_outcomes runs during morning brief and via standalone endpoint."""
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Morning brief")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Morning brief: RHR 48, HRV 66, sleep 7.1 hours. Solid night.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -739,7 +779,7 @@ class TestMeasureOutcomesWiring:
 
         mock_measure.assert_called_once()
 
-    @patch("engine.gateway.scheduler._compose_message", return_value="Evening checkin")
+    @patch("engine.gateway.scheduler._compose_message", return_value="Evening wind-down: sleep stack day 30, all 9 habits checked. Bed by 10.")
     @patch("engine.gateway.scheduler._gather_context", return_value={"checkin": {"data_available": {"garmin": True}, "score": {"coverage": 6}}})
     @patch("engine.gateway.scheduler._user_local_now")
     @patch("engine.gateway.scheduler._get_eligible_persons")
@@ -1023,7 +1063,8 @@ class TestOutboundGateInScheduler:
         with caplog.at_level(logging.WARNING, logger="kiso.scheduler"):
             result = _run_schedule("morning_brief", target_hour=7, dry_run=True)
 
-        assert result["results"][0]["status"] == "dry_run"
+        # Gate now enforces: bad messages are blocked, not just flagged
+        assert result["results"][0]["status"] == "gate_blocked"
         assert any("outbound_gate" in r.message for r in caplog.records)
 
     @patch("engine.gateway.scheduler._compose_message", return_value="Sleep was 7.1 hours last night. HRV trending up at 62.")

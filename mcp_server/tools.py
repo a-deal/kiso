@@ -446,6 +446,29 @@ def _checkin(greeting: str = "morning check-in", user_id: str | None = None) -> 
             last_up = garmin_data['last_updated']
             briefing["garmin_stale_warning"] = f"WARNING: Garmin data is stale (last updated {last_up}). Pull failed: {garmin_pull_error}. Sleep, HR, HRV, steps may not reflect last night."
 
+    # L2: Surface source-change warnings so the agent doesn't mislead on metrics
+    # whose data source changed recently (e.g. Garmin -> Apple Health).
+    try:
+        from engine.gateway.db import get_db
+        from engine.gateway.scheduler import detect_source_changes
+        uid = _effective_user_id(user_id)
+        pid = _resolve_person_id(uid)
+        if pid:
+            conn = get_db()
+            changes = detect_source_changes(conn, pid)
+            if changes:
+                briefing["source_change_warnings"] = {
+                    metric: (
+                        f"WARNING: {metric} data source changed from "
+                        f"{info['old_source']} to {info['new_source']} in the last 7 days. "
+                        f"Changes in this metric may reflect the different measurement method, "
+                        f"not an actual change in health."
+                    )
+                    for metric, info in changes.items()
+                }
+    except Exception as e:
+        logger.warning("Source change detection failed: %s", e)
+
     return briefing
 
 

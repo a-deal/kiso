@@ -311,3 +311,45 @@ class TestWearableConnectToCheckin:
             # Wearable data appears in checkin
             assert briefing.get("data_available", {}).get("wearable_daily") is True, \
                 f"wearable_daily not in data_available. Got: {briefing.get('data_available')}"
+
+
+# ---------------------------------------------------------------------------
+# Test D: Source change warnings surface in checkin (L2 on agent path)
+# ---------------------------------------------------------------------------
+
+
+class TestSourceChangeInCheckin:
+    """When a wearable source changes, checkin should warn the agent so it doesn't mislead."""
+
+    def test_source_change_appears_in_checkin(self, e2e_env):
+        from mcp_server.tools import _checkin
+
+        user_id = e2e_env["user_id"]
+        person_id = e2e_env["person_id"]
+        db = e2e_env["db"]
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        two_days = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+
+        with patch("mcp_server.tools._USER_HOME", e2e_env["tmp_path"] / "data"):
+            # Insert wearable data with a source change: garmin -> apple_health
+            _insert_wearable(db, person_id, two_days, "garmin", rhr=52, hrv=58, sleep_hrs=7.0)
+            _insert_wearable(db, person_id, yesterday, "garmin", rhr=53, hrv=56, sleep_hrs=6.8)
+            _insert_wearable(db, person_id, today, "apple_health", rhr=62, hrv=38, sleep_hrs=6.5)
+
+            with patch("mcp_server.tools._pull_garmin", return_value={"pulled": False}):
+                with patch("mcp_server.tools._get_token_store") as mock_ts:
+                    ts = MagicMock()
+                    ts.has_token.return_value = False
+                    mock_ts.return_value = ts
+                    briefing = _checkin(user_id=user_id)
+
+            # Checkin should include source change warnings
+            assert "source_change_warnings" in briefing, \
+                f"No source_change_warnings in checkin. Keys: {list(briefing.keys())}"
+            warnings = briefing["source_change_warnings"]
+            assert len(warnings) > 0, "Expected at least one source change warning"
+            # At least one metric should show garmin -> apple_health
+            warning_text = str(warnings)
+            assert "garmin" in warning_text.lower()
+            assert "apple_health" in warning_text.lower()
