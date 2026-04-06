@@ -3560,6 +3560,9 @@ def _get_conversations(
     # Keep voice summaries (milo-voice-summary) so text-based Milo has call context
     # without being flooded by every spoken turn.
     voice_filter = "AND NOT (channel = 'voice' AND sender_name != 'milo-voice-summary')"
+    # Exclude cron status codes that pollute coaching context (220 of 1,539 messages on Apr 5).
+    # Data stays in DB for debugging; coaching agent never sees it.
+    cron_filter = "AND content NOT IN ('HEARTBEAT_OK', 'NO_REPLY')"
     if user_id:
         rows = conn.execute(
             f"""SELECT user_id, role, content, sender_name, channel,
@@ -3567,6 +3570,7 @@ def _get_conversations(
                FROM conversation_message
                WHERE user_id = ? AND timestamp >= datetime('now', ?)
                {voice_filter}
+               {cron_filter}
                ORDER BY timestamp""",
             (user_id, f"-{days} days"),
         ).fetchall()
@@ -3577,6 +3581,7 @@ def _get_conversations(
                FROM conversation_message
                WHERE timestamp >= datetime('now', ?)
                {voice_filter}
+               {cron_filter}
                ORDER BY user_id, timestamp""",
             (f"-{days} days",),
         ).fetchall()
