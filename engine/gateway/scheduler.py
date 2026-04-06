@@ -351,7 +351,7 @@ def append_wearable_connect_link(
 # --- Message composition via Sonnet ---
 
 
-def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None, last_message: str | None = None) -> str:
+def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None, last_message: str | None = None, has_program: bool = False) -> str:
     """Call Anthropic Sonnet to compose a coaching message."""
     from anthropic import Anthropic
 
@@ -360,6 +360,12 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict, anc
         evening_habit_line = f"2) Ask about their anchor habit: \"{anchor_habit}\", "
     else:
         evening_habit_line = "2) Skip anchor habit (none set yet). Suggest picking one small daily habit together. "
+
+    # Evening check-in: only mention program status when user has an active program
+    if has_program:
+        evening_program_line = "1) Active program status, "
+    else:
+        evening_program_line = ""
 
     prompts = {
         "morning_brief": (
@@ -371,7 +377,7 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict, anc
         ),
         "evening_checkin": (
             f"You are Milo, a direct and warm health coach. Compose an evening check-in for {user_name}. "
-            f"Include: 1) Active program status if any, {evening_habit_line}"
+            f"Include: {evening_program_line}{evening_habit_line}"
             "3) Any meals left to log, 4) Tonight's protocol reminder if applicable. "
             "Keep it to 3-4 sentences. No greetings, no sign-offs."
         ),
@@ -627,6 +633,17 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
             except Exception as e:
                 logger.debug("Anchor habit lookup failed for %s: %s", user_id, e)
 
+            # Check if user has an active workout program
+            has_program = False
+            try:
+                prog = db.execute(
+                    "SELECT 1 FROM workout_program WHERE person_id = ? AND status = 'active' LIMIT 1",
+                    (person_id,),
+                ).fetchone()
+                has_program = prog is not None
+            except Exception as e:
+                logger.debug("Program lookup failed for %s: %s", user_id, e)
+
             # Fetch last scheduled message to avoid repetition
             last_message = None
             try:
@@ -643,7 +660,7 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
 
             # Compose message
             try:
-                message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit, last_message=last_message)
+                message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit, last_message=last_message, has_program=has_program)
             except Exception as e:
                 logger.error("Failed to compose message for %s: %s", user_id, e)
                 results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
