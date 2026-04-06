@@ -268,6 +268,16 @@ class TestIngestIntegration:
         monkeypatch.setattr(
             "engine.gateway.db._db_path", lambda: db_path,
         )
+        # Add a known user so _ingest_message can resolve user_id
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        db = get_db(db_path)
+        db.execute(
+            "INSERT INTO person (id, name, health_engine_user_id, phone, channel, channel_target, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("mike-001", "Mike", "mike", "+17033625977", "whatsapp", "+17033625977", now, now),
+        )
+        db.commit()
         yield db_path
         close_db()
 
@@ -276,7 +286,8 @@ class TestIngestIntegration:
         result = _ingest_message(
             role="assistant",
             content="Your HRV is at 64ms. Sleep was 6.2 hours. Keep it up.",
-            sender_id="milo",
+            sender_name="Milo",
+            session_key="agent:main:whatsapp:direct:+17033625977",
         )
         assert result["status"] == "ok"
         assert "gate_flags" not in result
@@ -286,7 +297,8 @@ class TestIngestIntegration:
         result = _ingest_message(
             role="assistant",
             content='Here is the data: {"wearable_token": "abc", "person_id": "p1"}',
-            sender_id="milo",
+            sender_name="Milo",
+            session_key="agent:main:whatsapp:direct:+17033625977",
         )
         assert result["status"] == "ok"  # Still ingested (async audit, not blocking)
         assert "gate_flags" in result
@@ -298,6 +310,7 @@ class TestIngestIntegration:
             role="user",
             content='{"wearable_token": "abc"}',  # User can say whatever they want
             sender_id="+17033625977",
+            sender_name="Mike",
         )
         assert result["status"] == "ok"
         assert "gate_flags" not in result

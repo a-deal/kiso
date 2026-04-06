@@ -3530,6 +3530,17 @@ def _ingest_message(
                     if clean in phone_map:
                         user_id = phone_map[clean]["user_id"]
 
+    # Reject messages with unresolvable user_id. These are cron sessions,
+    # backfill artifacts, or unknown senders. Log for debugging but don't
+    # pollute conversation_message with NULL user_id rows.
+    if user_id is None:
+        logger.info(
+            "Unresolved user_id for %s message (sender_id=%s, session_key=%s). Not stored.",
+            role, sender_id, session_key[:60] if session_key else "",
+        )
+        return {"status": "unresolved_user", "user_id": None, "role": role,
+                "sender_id": sender_id, "session_key": session_key}
+
     conn = get_db()
 
     # Dedup: skip if identical message for same user was written in last 60s

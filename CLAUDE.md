@@ -173,6 +173,11 @@ This system serves multiple users with very different profiles. What's "critical
 - **Streak grace period:** Streak counts from yesterday if today isn't logged yet. Don't punish users for not having checked in yet today.
 - **Before shipping any user-facing feature:** Run it against every active user's data and verify the output makes sense for THAT person.
 
+**Conversation writes — HARD RULE:**
+- Every write to `conversation_message` must go through `_ingest_message()` or `_ingest_scheduled_message()`. No direct INSERTs.
+- `_ingest_message()` rejects messages with unresolvable `user_id` (returns `"unresolved_user"`). This is intentional. Cron sessions, backfill scripts, and unknown senders do not get stored.
+- If you need to write a message from a new code path, resolve the `user_id` first. If you can't resolve it, the message doesn't belong in `conversation_message`.
+
 ## Engineering Standards
 
 Every feature ships with:
