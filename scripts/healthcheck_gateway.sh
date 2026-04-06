@@ -22,7 +22,25 @@ if [ "$SERVICE" = "kiso-v1" ]; then
     FAILURES="$FAILURES\n- Port 18800 running v1-only API instead of full gateway"
 fi
 
-# Check 4: Cloudflare tunnel alive
+# Check 4: Stuck users (created >48h ago, no wearable data)
+TOKEN="NZCT4pzvxC36OSaCztUYjq2_LAkqdC5_LmTFysa9VAY"
+DEEP=$(curl -sf "http://localhost:18800/health/deep?token=$TOKEN" 2>/dev/null)
+STUCK=$(echo "$DEEP" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    stuck = d.get('checks', {}).get('stuck_users', {})
+    if stuck:
+        names = [f'{k} ({v[\"days\"]}d)' for k, v in stuck.items() if isinstance(v, dict) and v.get('status') == 'stuck']
+        if names:
+            print(', '.join(names))
+except: pass
+" 2>/dev/null)
+if [ -n "$STUCK" ]; then
+    FAILURES="$FAILURES\n- Stuck users (no wearable data): $STUCK"
+fi
+
+# Check 5: Cloudflare tunnel alive
 CF_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://auth.mybaseline.health/health" 2>/dev/null)
 if [ "$CF_STATUS" = "000" ] || [ "$CF_STATUS" = "502" ] || [ "$CF_STATUS" = "503" ]; then
     FAILURES="$FAILURES\n- Cloudflare tunnel down (HTTP $CF_STATUS)"
