@@ -104,6 +104,22 @@ _INTERNAL_TERMS = [
     ("remediation", True),
     ("cron re-triggered", False),
     ("stale (>", False),
+    # System health check messages (leaked 5x on April 5)
+    ("system health check", False),
+    ("action needed", False),
+    ("briefing stale", False),
+    ("threshold 72h", False),
+    ("threshold 48h", False),
+    ("stuck 7 days", False),
+    # Agent process narration (leaked 10+ times on April 5)
+    ("human judgment needed", False),
+    ("delivered to andrew", False),
+    ("delivered to paul", False),
+    ("delivered to mike", False),
+    ("delivered to grigoriy", False),
+    ("reading from disk", False),
+    ("logging the rest in parallel", False),
+    ("all on disk", False),
 ]
 
 # Compile word-boundary patterns for efficiency
@@ -147,6 +163,15 @@ def validate_outbound(message: str) -> ValidationResult:
         return ValidationResult()
 
     result = ValidationResult()
+
+    # Category 0: Structural sanity — messages under 15 chars are process narration
+    # ("On it.", "Logged.", "All on disk." etc.) Real coaching is 50+ chars.
+    stripped = message.strip()
+    if 0 < len(stripped) < 15:
+        result.ok = False
+        result.flags.append("too_short")
+        result.details.append(f"too_short:{len(stripped)}_chars")
+        return result
 
     # Strip allowlisted content before checking
     cleaned = _ALLOWLIST.sub("", message)
