@@ -223,6 +223,8 @@ When a user asks "why do you measure this?" or "how does scoring work?", referen
 - OpenAI Realtime API voices differ from TTS API. Onyx/fable unavailable. Valid: alloy, ash, ballad, coral, echo, sage, shimmer, verse, marin, cedar. (learned 2026-04-03)
 - Voice context: use _checkin not _get_daily_snapshot. Snapshot needs live Garmin auth which may fail. Checkin has all the data from SQLite. (learned 2026-04-03)
 - Voice transcripts: save raw turns + Haiku summary. _get_conversations filters raw voice turns, shows only milo-voice-summary rows to text-based Milo. (learned 2026-04-03)
+- /sync/ios must reject entities whose id/person_id doesn't match the request's person_id. Multi-person CoreData stores (family profiles) will push orphan rows otherwise. (learned 2026-04-05)
+- iOS dev build stash in habica-ios: `git stash pop stash@{0}` for team L92KLL4DGF, entitlement stripping, CoreDataStack local fallback, DevTools re-auth button. Always re-stash before pushing. (learned 2026-04-05)
 
 # Cost Control — HARD RULE
 NEVER use Opus for automated/cron/background tasks. Use Haiku for routine operations (check-ins, log parsing, cron jobs). Use Sonnet only for complex reasoning (compound pattern detection, onboarding synthesis). Opus is reserved for interactive human sessions only. Monitor API costs weekly at console.anthropic.com. If monthly API spend exceeds $50, alert Andrew immediately.
