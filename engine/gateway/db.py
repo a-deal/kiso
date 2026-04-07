@@ -633,6 +633,15 @@ def _migrate(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE prescribed_exercise ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
         dirty = True
 
+    # focus_plan: add origin and exclusions columns
+    fp_cols = {row[1] for row in conn.execute("PRAGMA table_info(focus_plan)").fetchall()}
+    if "origin" not in fp_cols:
+        conn.execute("ALTER TABLE focus_plan ADD COLUMN origin TEXT DEFAULT 'ios_generated'")
+        dirty = True
+    if "exclusions" not in fp_cols:
+        conn.execute("ALTER TABLE focus_plan ADD COLUMN exclusions TEXT")
+        dirty = True
+
     if dirty:
         conn.commit()
 
@@ -842,6 +851,7 @@ TABLE_COLUMNS = {
         "care_team_summary", "care_team_suggestions",
         "legacy_habit_title", "legacy_habit_purpose", "legacy_habit_anchor",
         "legacy_habit_category", "legacy_habit_emoji",
+        "origin", "exclusions",
     ],
     "health_measurement": [
         "person_id", "type_identifier", "value", "unit", "date", "source",

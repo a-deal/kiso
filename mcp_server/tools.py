@@ -1477,6 +1477,42 @@ def _get_ingest_status(user_id: str | None = None) -> dict:
         return {"has_data_today": False, "sources": {}, "error": str(e)}
 
 
+def _set_user_goals(goals: str, exclusions: str | None = None, user_id: str | None = None) -> dict:
+    """Record user-stated goals in the focus plan.
+
+    Creates a new focus_plan entry with origin='user_stated'. Coexists with
+    iOS-generated plans. The scheduler reads the most recent plan regardless
+    of origin (recency wins).
+
+    Args:
+        goals: What the user wants to focus on (e.g. "3x strength/week, daily fish oil")
+        exclusions: What the user does NOT want coached on (e.g. "weight tracking")
+        user_id: Optional user ID
+    """
+    import uuid
+
+    person_id = _resolve_person_id(user_id)
+    if not person_id:
+        return {"error": f"No person record for user_id={user_id}"}
+
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        db = get_db()
+        now = datetime.utcnow().isoformat() + "Z"
+        plan_id = str(uuid.uuid4())
+
+        db.execute(
+            "INSERT INTO focus_plan (id, person_id, primary_action, exclusions, origin, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'user_stated', ?, ?)",
+            (plan_id, person_id, goals, exclusions, now, now),
+        )
+        db.commit()
+        return {"saved": True, "origin": "user_stated", "plan_id": plan_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def _set_source_preference(source: str, user_id: str | None = None) -> dict:
     """Set the user's preferred wearable data source.
 
@@ -3873,6 +3909,7 @@ TOOL_REGISTRY = {
     "get_outcomes": _get_outcomes_tool,
     "get_ingest_status": _get_ingest_status,
     "set_source_preference": _set_source_preference,
+    "set_user_goals": _set_user_goals,
     # Excluded from HTTP: auth_garmin (interactive), auth_oura (interactive),
     # auth_whoop (interactive), open_dashboard (browser)
 }
@@ -4024,6 +4061,11 @@ def register_tools(mcp: FastMCP):
     def set_source_preference(source: str, user_id: str | None = None) -> dict:
         """Set the user's preferred wearable source (garmin, apple_health, oura, whoop). Call this after the user confirms which wearable they want as primary. Stops source change warnings for the confirmed source."""
         return _set_source_preference(source, _effective_user_id(user_id))
+
+    @mcp.tool()
+    def set_user_goals(goals: str, exclusions: str | None = None, user_id: str | None = None) -> dict:
+        """Record the user's stated health goals and what they do NOT want coached on. Call this when a user tells you their focus (e.g. '3x strength training/week, daily fish oil') or rejects a suggestion (e.g. 'not my program' for weight). Goals and exclusions persist across sessions and inform all future coaching messages."""
+        return _set_user_goals(goals, exclusions, _effective_user_id(user_id))
 
     @mcp.tool()
     def onboard(user_id: str | None = None) -> dict:

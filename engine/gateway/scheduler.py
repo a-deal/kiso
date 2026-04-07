@@ -332,6 +332,63 @@ def get_anchor_habit(db, person_id: str) -> str | None:
     return row["primary_anchor"] if row else None
 
 
+def get_user_goals(db, person_id: str) -> dict:
+    """Return the user's current goals, exclusions, and anchor from the latest focus plan.
+
+    Returns dict with: goals, exclusions, anchor, origin. All nullable.
+    Reads the most recent non-deleted focus_plan regardless of origin (recency wins).
+    """
+    row = db.execute(
+        "SELECT primary_action, primary_anchor, exclusions, origin FROM focus_plan "
+        "WHERE person_id = ? AND deleted_at IS NULL "
+        "ORDER BY created_at DESC LIMIT 1",
+        (person_id,),
+    ).fetchone()
+    if not row:
+        return {"goals": None, "exclusions": None, "anchor": None, "origin": None}
+    return {
+        "goals": row["primary_action"],
+        "exclusions": row["exclusions"],
+        "anchor": row["primary_anchor"],
+        "origin": row["origin"],
+    }
+
+
+def get_unreconciled_goals(db) -> list[dict]:
+    """Find users with user_stated focus plans that haven't been reconciled.
+
+    A user needs reconciliation when their most recent focus_plan is
+    origin='user_stated' (i.e., no 'reconciled' plan exists that's newer).
+
+    Returns list of dicts: person_id, name, user_stated_goals, exclusions, stated_at.
+    """
+    rows = db.execute(
+        """SELECT fp.person_id, p.name, fp.primary_action, fp.exclusions, fp.created_at
+           FROM focus_plan fp
+           JOIN person p ON p.id = fp.person_id
+           WHERE fp.deleted_at IS NULL
+             AND fp.origin = 'user_stated'
+             AND NOT EXISTS (
+                 SELECT 1 FROM focus_plan fp2
+                 WHERE fp2.person_id = fp.person_id
+                   AND fp2.deleted_at IS NULL
+                   AND fp2.origin = 'reconciled'
+                   AND fp2.created_at > fp.created_at
+             )
+           ORDER BY fp.created_at DESC"""
+    ).fetchall()
+    return [
+        {
+            "person_id": r["person_id"],
+            "name": r["name"],
+            "user_stated_goals": r["primary_action"],
+            "exclusions": r["exclusions"],
+            "stated_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
 # --- Wearable connect link (post-composition) ---
 
 
@@ -370,7 +427,7 @@ def append_wearable_connect_link(
 # --- Message composition via Sonnet ---
 
 
-def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None, last_message: str | None = None, has_program: bool = False) -> str:
+def _compose_message(schedule_type: str, user_name: str, context_data: dict, anchor_habit: str | None = None, last_message: str | None = None, has_program: bool = False, exclusions: str | None = None, recent_user_replies: list[str] | None = None, user_goals: str | None = None) -> str:
     """Call Anthropic Sonnet to compose a coaching message."""
     from anthropic import Anthropic
 
@@ -421,6 +478,14 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict, anc
     )
 
     user_content = f"{prompts[schedule_type]}\n\nHealth data:\n{json.dumps(context_data, indent=2, default=str)}"
+    if user_goals:
+        user_content += f"\n\nUser's stated goals: {user_goals}"
+    if exclusions:
+        user_content += f"\n\nIMPORTANT: Do NOT suggest or mention the following topics. The user has explicitly opted out: {exclusions}"
+    if recent_user_replies:
+        user_content += "\n\nRecent messages FROM the user (respect their stated preferences and adjust accordingly):"
+        for reply in recent_user_replies:
+            user_content += f"\n- {reply}"
     if last_message:
         user_content += f"\n\nLast message sent to this user (do NOT repeat the same primary nudge or talking points):\n{last_message}"
 
@@ -663,6 +728,11 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
             except Exception as e:
                 logger.debug("Program lookup failed for %s: %s", user_id, e)
 
+            # Fetch user goals and exclusions from focus plan
+            user_goals_data = get_user_goals(db, person_id)
+            user_goals_text = user_goals_data.get("goals")
+            exclusions_text = user_goals_data.get("exclusions")
+
             # Fetch last scheduled message to avoid repetition
             last_message = None
             try:
@@ -677,9 +747,31 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
             except Exception as e:
                 logger.debug("Last message lookup failed for %s: %s", user_id, e)
 
+            # Fetch recent user replies for context
+            recent_user_replies = []
+            try:
+                reply_rows = db.execute(
+                    "SELECT content FROM conversation_message "
+                    "WHERE user_id = ? AND role = 'user' "
+                    "ORDER BY created_at DESC LIMIT 3",
+                    (user_id,),
+                ).fetchall()
+                recent_user_replies = [
+                    r["content"] for r in reply_rows
+                    if r["content"] and not r["content"].startswith("<media:")
+                ]
+            except Exception as e:
+                logger.debug("User replies lookup failed for %s: %s", user_id, e)
+
             # Compose message
             try:
-                message = _compose_message(schedule_type, name, context_data, anchor_habit=anchor_habit, last_message=last_message, has_program=has_program)
+                message = _compose_message(
+                    schedule_type, name, context_data,
+                    anchor_habit=anchor_habit, last_message=last_message,
+                    has_program=has_program, exclusions=exclusions_text,
+                    recent_user_replies=recent_user_replies,
+                    user_goals=user_goals_text,
+                )
             except Exception as e:
                 logger.error("Failed to compose message for %s: %s", user_id, e)
                 results.append({"user_id": user_id, "status": "error", "reason": f"compose failed: {e}"})
