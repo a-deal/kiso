@@ -11,11 +11,14 @@ POST /api/v1/generate-focus-plan
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime
 
 import anthropic
+
+logger = logging.getLogger("health-engine.focus_plan_api")
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from engine.coaching.habit_catalogue import HABITS
@@ -163,8 +166,9 @@ async def generate_focus_plan(request: Request, _token: str = Depends(_verify_to
     catalogue_json = _build_catalogue_json()
     system = SYSTEM_PROMPT.format(catalogue_json=catalogue_json)
 
-    # Call Claude
-    client = anthropic.Anthropic()
+    # Call Claude — explicit timeout so the request completes before Cloudflare
+    # Tunnel (~100s) or iOS URLSession (60s) give up and return 502.
+    client = anthropic.Anthropic(timeout=90.0)
     try:
         response = client.messages.create(
             model=FOCUS_PLAN_MODEL,
@@ -172,7 +176,11 @@ async def generate_focus_plan(request: Request, _token: str = Depends(_verify_to
             system=system,
             messages=[{"role": "user", "content": user_message}],
         )
+    except anthropic.APITimeoutError:
+        logger.error("Focus plan LLM call timed out (90s)")
+        raise HTTPException(504, "Focus plan generation timed out. Please try again.")
     except Exception as e:
+        logger.error(f"Focus plan LLM call failed: {e}")
         raise HTTPException(502, f"LLM call failed: {e}")
 
     text = response.content[0].text.strip()
