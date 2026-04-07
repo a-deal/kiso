@@ -103,6 +103,59 @@ class TestAppendWearableConnectLink:
         assert result == message
 
 
+class TestDataPresenceFallback:
+    """When tokens are missing but wearable data exists, skip the nudge."""
+
+    def test_no_nudge_when_data_flowing(self, db_with_mike):
+        """User has no tokens but wearable_daily has recent data. Skip nudge."""
+        import uuid
+        now = datetime.utcnow().isoformat() + "Z"
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        # Insert recent wearable data for mike
+        db_with_mike.execute(
+            "INSERT INTO wearable_daily (id, person_id, date, source, rhr, steps, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "mike-001", today, "garmin", 52, 8000, now, now),
+        )
+        db_with_mike.commit()
+
+        message = "Good morning Mike."
+        mock_ts = MagicMock()
+        mock_ts.has_token.return_value = False
+
+        result = append_wearable_connect_link(message, "mike", mock_ts, db=db_with_mike)
+        assert result == message  # No nudge because data is flowing
+
+    def test_nudge_when_no_tokens_and_no_data(self, db_with_mike):
+        """User has no tokens AND no wearable data. Nudge should appear."""
+        message = "Good morning Mike."
+        mock_ts = MagicMock()
+        mock_ts.has_token.return_value = False
+
+        result = append_wearable_connect_link(message, "mike", mock_ts, db=db_with_mike)
+        assert "connect" in result.lower()
+
+    def test_stale_data_still_nudges(self, db_with_mike):
+        """Data older than 7 days should not suppress the nudge."""
+        import uuid
+        from datetime import timedelta
+        now = datetime.utcnow().isoformat() + "Z"
+        old_date = (datetime.utcnow() - timedelta(days=10)).strftime("%Y-%m-%d")
+        db_with_mike.execute(
+            "INSERT INTO wearable_daily (id, person_id, date, source, rhr, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "mike-001", old_date, "garmin", 52, now, now),
+        )
+        db_with_mike.commit()
+
+        message = "Good morning Mike."
+        mock_ts = MagicMock()
+        mock_ts.has_token.return_value = False
+
+        result = append_wearable_connect_link(message, "mike", mock_ts, db=db_with_mike)
+        assert "connect" in result.lower()  # Old data, still nudge
+
+
 class TestTokenStoreArgOrder:
     """Verify has_token is called with (service, user_id), not swapped."""
 

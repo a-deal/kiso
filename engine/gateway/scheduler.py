@@ -398,16 +398,46 @@ def _get_token_store():
     return TokenStore()
 
 
+def _has_recent_wearable_data(db, user_id: str, days: int = 7) -> bool:
+    """Check if wearable_daily has any data for this user in the last N days.
+
+    Fallback for when token store has no tokens but data is flowing
+    (e.g., admin pulls on behalf of user).
+    """
+    from datetime import datetime, timedelta
+    try:
+        # Resolve person_id from user_id
+        row = db.execute(
+            "SELECT id FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return False
+        person_id = row["id"]
+        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        count = db.execute(
+            "SELECT COUNT(*) as cnt FROM wearable_daily WHERE person_id = ? AND date >= ?",
+            (person_id, cutoff),
+        ).fetchone()
+        return count["cnt"] > 0
+    except Exception:
+        return False
+
+
 def append_wearable_connect_link(
     message: str,
     user_id: str,
     token_store=None,
+    db=None,
 ) -> str:
-    """Append a text nudge if the user has no wearable tokens.
+    """Append a text nudge if the user has no wearable tokens and no recent data.
 
     No HMAC links: they expire before users read async messages.
     Instead, prompt the user to reply so the live agent can generate
     a fresh link on demand.
+
+    Checks tokens first (fast), then falls back to checking wearable_daily
+    for recent data (handles cases where data flows without user tokens).
     """
     try:
         ts = token_store or _get_token_store()
@@ -416,6 +446,10 @@ def append_wearable_connect_link(
         has_whoop = ts.has_token("whoop", user_id)
 
         if has_garmin or has_oura or has_whoop:
+            return message
+
+        # Fallback: check if data is flowing even without tokens
+        if db and _has_recent_wearable_data(db, user_id):
             return message
 
         return message + "\n\nReply 'connect' and I'll help you link your wearable."
@@ -471,6 +505,9 @@ def _compose_message(schedule_type: str, user_name: str, context_data: dict, anc
         "Never use em dashes. Use periods, commas, or colons instead. "
         "IMPORTANT: Never announce missing data. If sleep data is missing, don't mention sleep. "
         "Coach from what you have, not from what you don't. "
+        "IMPORTANT: If the health data contains '_stale': true on today_snapshot, the wearable data "
+        "is NOT from last night. Do NOT present it as last night's sleep. Either skip sleep entirely "
+        "or note that today's data hasn't synced yet. "
         "IMPORTANT: If vo2_max_source differs from wearable_source (e.g. vo2 from apple_health but "
         "other metrics from garmin), note that the VO2 number comes from a different device/algorithm. "
         "Different wearables use different VO2 estimation methods, so a source change is NOT a fitness "
@@ -686,7 +723,7 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
 
             if days_since <= 7:
                 message = _ONBOARDING_MESSAGE.format(name=name)
-                message = append_wearable_connect_link(message, user_id, _get_token_store())
+                message = append_wearable_connect_link(message, user_id, _get_token_store(), db=db)
                 logger.info("Sending onboarding nudge to %s (day %d)", user_id, days_since)
             else:
                 logger.warning(
@@ -814,7 +851,7 @@ def _run_schedule(schedule_type: str, target_hour: int, require_friday: bool = F
         # Append wearable connect nudge if user has no wearable tokens
         try:
             message = append_wearable_connect_link(
-                message, user_id, _get_token_store(),
+                message, user_id, _get_token_store(), db=db,
             )
         except Exception as e:
             logger.warning("Wearable connect nudge failed for %s: %s", user_id, e)

@@ -258,6 +258,28 @@ class TestCompositionIncludesUserContext:
 # --- Reconciliation diff tests ---
 
 
+class TestGetUnreconciledGoalsTool:
+
+    def test_registered_in_tool_registry(self):
+        from mcp_server.tools import TOOL_REGISTRY, _get_unreconciled_goals
+        assert "get_unreconciled_goals" in TOOL_REGISTRY
+        assert TOOL_REGISTRY["get_unreconciled_goals"] is _get_unreconciled_goals
+
+    def test_returns_count_and_list(self, db_with_paul):
+        now = datetime.utcnow().isoformat()
+        db_with_paul.execute(
+            "INSERT INTO focus_plan (id, person_id, primary_action, origin, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("fp1", "paul-001", "3x strength/week", "user_stated", now, now),
+        )
+        db_with_paul.commit()
+
+        from mcp_server.tools import _get_unreconciled_goals
+        result = _get_unreconciled_goals()
+        assert result["count"] >= 1
+        assert any(g["person_id"] == "paul-001" for g in result["unreconciled"])
+
+
 class TestReconciliationDiff:
 
     def test_no_plans_returns_empty(self, db_with_paul):

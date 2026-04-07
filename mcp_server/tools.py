@@ -1513,6 +1513,23 @@ def _set_user_goals(goals: str, exclusions: str | None = None, user_id: str | No
         return {"error": str(e)}
 
 
+def _get_unreconciled_goals() -> dict:
+    """Get users with user-stated goals that haven't been reconciled.
+
+    Returns a list of users whose most recent focus_plan is origin='user_stated'
+    with no newer 'reconciled' plan. Used for weekly reconciliation review.
+    """
+    try:
+        from engine.gateway.db import get_db, init_db
+        from engine.gateway.scheduler import get_unreconciled_goals
+        init_db()
+        db = get_db()
+        goals = get_unreconciled_goals(db)
+        return {"unreconciled": goals, "count": len(goals)}
+    except Exception as e:
+        return {"error": str(e), "unreconciled": [], "count": 0}
+
+
 def _set_source_preference(source: str, user_id: str | None = None) -> dict:
     """Set the user's preferred wearable data source.
 
@@ -3910,6 +3927,7 @@ TOOL_REGISTRY = {
     "get_ingest_status": _get_ingest_status,
     "set_source_preference": _set_source_preference,
     "set_user_goals": _set_user_goals,
+    "get_unreconciled_goals": _get_unreconciled_goals,
     # Excluded from HTTP: auth_garmin (interactive), auth_oura (interactive),
     # auth_whoop (interactive), open_dashboard (browser)
 }
@@ -4066,6 +4084,11 @@ def register_tools(mcp: FastMCP):
     def set_user_goals(goals: str, exclusions: str | None = None, user_id: str | None = None) -> dict:
         """Record the user's stated health goals and what they do NOT want coached on. Call this when a user tells you their focus (e.g. '3x strength training/week, daily fish oil') or rejects a suggestion (e.g. 'not my program' for weight). Goals and exclusions persist across sessions and inform all future coaching messages."""
         return _set_user_goals(goals, exclusions, _effective_user_id(user_id))
+
+    @mcp.tool()
+    def get_unreconciled_goals() -> dict:
+        """Get users with unreconciled goals for weekly review. Returns users whose stated goals (from conversation) haven't been reconciled with their focus plan. Use this during weekly coaching review to find mismatches between what users want and what the system is coaching toward."""
+        return _get_unreconciled_goals()
 
     @mcp.tool()
     def onboard(user_id: str | None = None) -> dict:

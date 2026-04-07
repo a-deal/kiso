@@ -190,8 +190,12 @@ def build_briefing(config: dict) -> dict:
     if daily_series and isinstance(daily_series, list):
         today_daily = next((d for d in daily_series if d.get("date") == today), None)
         if not today_daily:
-            # Fall back to most recent day
+            # Fall back to most recent day, but flag it as stale
             today_daily = daily_series[-1] if daily_series else None
+            if today_daily:
+                today_daily = dict(today_daily)  # copy to avoid mutating source
+                today_daily["_stale"] = True
+                today_daily["_stale_note"] = f"Data is from {today_daily.get('date', 'unknown')}, not today. Today's sync may not have run yet."
         if today_daily:
             briefing["today_snapshot"] = today_daily
 
