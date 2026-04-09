@@ -677,7 +677,7 @@ class TestGenerateFocusPlan:
                 return FakeMessage()
 
         class FakeAnthropic:
-            def __init__(self):
+            def __init__(self, **kwargs):
                 self.messages = FakeMessages()
 
         monkeypatch.setattr(fp_mod.anthropic, "Anthropic", FakeAnthropic)
