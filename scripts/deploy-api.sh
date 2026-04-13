@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# DRY_RUN guard — MUST be the first thing before any side effect.
+# Source: 2026-04-12 accidental-deploy incident. A test exercised this
+# script assuming a DRY_RUN contract that did not exist; the test was
+# the deploy. HARD RULE #9 in ~/.claude/CLAUDE.md: side-effecting
+# scripts must be no-op by default. This stub is the guard; the full
+# 10-step dry-run harness lands in a later commit.
+if [ "${DRY_RUN:-0}" = "1" ]; then
+    log_file="${DEPLOY_DRY_RUN_LOG:-/tmp/deploy-dry-run.log}"
+    mkdir -p "$(dirname "$log_file")"
+    {
+        echo "DRY_RUN=1 invoked at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "args: $*"
+        echo "cwd: $(pwd)"
+        echo "STEP:dry_run_guard_fired"
+    } >> "$log_file"
+    exit 0
+fi
+
 # Deploy API code to Mac Mini via git pull and restart.
 #
 # Flow: commit locally -> push to GitHub -> pull on Mac Mini -> restart
