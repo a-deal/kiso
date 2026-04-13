@@ -41,6 +41,12 @@ def get_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # Cap WAL size: SQLite checkpoints automatically every 1000 pages
+    # (~4 MB at default page size). Without this the WAL grew larger
+    # than the database file (4.1 MB WAL vs 2.2 MB db) because nothing
+    # was triggering checkpoints. Milestone 1 of the baseline
+    # consolidation sprint (hub/plans/2026-04-12-baseline-consolidation.md).
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
     conn.execute("PRAGMA foreign_keys=ON")
     _local.conn = conn
     _local.conn_path = path

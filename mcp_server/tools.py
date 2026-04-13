@@ -1394,9 +1394,26 @@ def _log_medication(
     return {"logged": True, "date": date, "name": name, "dose": dose, "route": route or ""}
 
 
+_STALENESS_THRESHOLD_HOURS = 72
+# Files that should be refreshed daily by their respective syncs.
+# Anything in here older than _STALENESS_THRESHOLD_HOURS gets a stale_warning.
+# Reason: the iPhone Baseline Sync app silently fell behind for 18 days
+# (apple_health_latest.json) and Milo coached off the dead surface. The
+# warning is the tripwire so the next outage is caught the day it starts.
+_FRESHNESS_TRACKED = {
+    "apple_health_latest.json",
+    "garmin_latest.json",
+    "garmin_daily.json",
+    "briefing.json",
+}
+
+
 def _get_status(user_id: str | None = None) -> dict:
+    import time as _time
     data_dir = _data_dir(user_id)
     files = {}
+    stale_warnings = []
+    now_unix = _time.time()
     for name in ["weight_log.csv", "bp_log.csv", "meal_log.csv", "daily_habits.csv",
                   "strength_log.csv", "medication_log.csv", "supplement_log.csv",
                   "garmin_latest.json", "garmin_daily.json",
@@ -1407,18 +1424,52 @@ def _get_status(user_id: str | None = None) -> dict:
             info = {
                 "exists": True,
                 "last_modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                # Raw os.stat mtime so consumers (and Milo's diagnosis tools) can
+                # reason about freshness against ground truth instead of a
+                # rounded human-readable string. See Milestone 1 of the
+                # baseline consolidation sprint
+                # (hub/plans/2026-04-12-baseline-consolidation.md): timestamp
+                # grounding fixes the "modified at 3:22 PM today" hallucination
+                # mode.
+                "mtime_unix": stat.st_mtime,
                 "size_bytes": stat.st_size,
             }
             if name.endswith(".csv"):
                 rows = read_csv(path)
                 info["rows"] = len(rows)
+            if name in _FRESHNESS_TRACKED:
+                age_hours = (now_unix - stat.st_mtime) / 3600.0
+                info["age_hours"] = age_hours
+                if age_hours > _STALENESS_THRESHOLD_HOURS:
+                    stale_warnings.append({
+                        "file": name,
+                        "age_hours": round(age_hours, 1),
+                        "threshold_hours": _STALENESS_THRESHOLD_HOURS,
+                        "message": (
+                            f"{name} is {round(age_hours, 1)}h old "
+                            f"(threshold {_STALENESS_THRESHOLD_HOURS}h). "
+                            f"The sync that writes it has likely failed."
+                        ),
+                    })
             files[name] = info
         else:
             files[name] = {"exists": False}
+            if name in _FRESHNESS_TRACKED:
+                stale_warnings.append({
+                    "file": name,
+                    "age_hours": None,
+                    "threshold_hours": _STALENESS_THRESHOLD_HOURS,
+                    "message": f"{name} does not exist. The sync has never run or the file was deleted.",
+                })
 
     config = _load_config(user_id)
     has_config = bool(config.get("profile", {}).get("age"))
-    return {"data_dir": str(data_dir), "config_loaded": has_config, "files": files}
+    return {
+        "data_dir": str(data_dir),
+        "config_loaded": has_config,
+        "files": files,
+        "stale_warnings": stale_warnings,
+    }
 
 
 def _get_ingest_status(user_id: str | None = None) -> dict:
