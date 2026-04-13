@@ -1400,11 +1400,21 @@ _STALENESS_THRESHOLD_HOURS = 72
 # Reason: the iPhone Baseline Sync app silently fell behind for 18 days
 # (apple_health_latest.json) and Milo coached off the dead surface. The
 # warning is the tripwire so the next outage is caught the day it starts.
+#
+# Kept narrow on purpose. garmin_daily.json is a derived rollup of
+# garmin_latest.json — alerting on both is noise. briefing.json is
+# regenerated on demand, not a sync target. lab_results.json is
+# event-driven (not daily).
+#
+# TODO(baseline-consolidation): once Milestone 3 lands the JSON sidecars
+# into SQLite tables, swap this filesystem scan for a
+# MAX(created_at) query against apple_health_measurement /
+# garmin_measurement. Milestone 6 then unifies this tripwire with
+# scripts/system-health-check.sh so freshness is checked in exactly
+# one place. See hub/plans/2026-04-12-baseline-consolidation.md.
 _FRESHNESS_TRACKED = {
     "apple_health_latest.json",
     "garmin_latest.json",
-    "garmin_daily.json",
-    "briefing.json",
 }
 
 
