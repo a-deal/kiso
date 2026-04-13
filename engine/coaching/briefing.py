@@ -296,42 +296,29 @@ def build_briefing(config: dict) -> dict:
                         "sleep_duration_avg", "vo2_max", "hrv_rmssd_avg", "zone2_min_per_week"):
                 metric_dates[key] = wearable_date
     if bp_data_for_score and _person_id:
-        try:
-            from engine.gateway.db import get_db, init_db
-            init_db()
-            _bp_latest = get_db().execute(
-                "SELECT date FROM bp_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
-                (_person_id,),
-            ).fetchone()
-            if _bp_latest:
-                metric_dates["bp_single"] = _bp_latest["date"]
-                metric_dates["bp_protocol"] = _bp_latest["date"]
-            _bp_7d = get_db().execute(
-                "SELECT COUNT(*) as cnt FROM bp_entry WHERE person_id = ? AND date >= date('now', '-7 days')",
-                (_person_id,),
-            ).fetchone()
-            metric_counts["bp"] = _bp_7d["cnt"] if _bp_7d else 0
-        except Exception:
-            bp_rows_raw = read_csv(data_dir / "bp_log.csv")
-            if bp_rows_raw:
-                metric_dates["bp_single"] = bp_rows_raw[-1].get("date", "")
-                metric_dates["bp_protocol"] = bp_rows_raw[-1].get("date", "")
-                bp_count = _count_recent_readings(bp_rows_raw, 7)
-                metric_counts["bp"] = bp_count
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        _bp_latest = get_db().execute(
+            "SELECT date FROM bp_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (_person_id,),
+        ).fetchone()
+        if _bp_latest:
+            metric_dates["bp_single"] = _bp_latest["date"]
+            metric_dates["bp_protocol"] = _bp_latest["date"]
+        _bp_7d = get_db().execute(
+            "SELECT COUNT(*) as cnt FROM bp_entry WHERE person_id = ? AND date >= date('now', '-7 days')",
+            (_person_id,),
+        ).fetchone()
+        metric_counts["bp"] = _bp_7d["cnt"] if _bp_7d else 0
     if weights_for_score and _person_id:
-        try:
-            from engine.gateway.db import get_db, init_db
-            init_db()
-            _wt_latest = get_db().execute(
-                "SELECT date FROM weight_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
-                (_person_id,),
-            ).fetchone()
-            if _wt_latest:
-                metric_dates["weight_lbs"] = _wt_latest["date"]
-        except Exception:
-            weight_rows_raw = read_csv(data_dir / "weight_log.csv")
-            if weight_rows_raw:
-                metric_dates["weight_lbs"] = weight_rows_raw[-1].get("date", "")
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        _wt_latest = get_db().execute(
+            "SELECT date FROM weight_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (_person_id,),
+        ).fetchone()
+        if _wt_latest:
+            metric_dates["weight_lbs"] = _wt_latest["date"]
 
     score_output = score_profile(profile, metric_dates=metric_dates,
                                  metric_counts=metric_counts)
