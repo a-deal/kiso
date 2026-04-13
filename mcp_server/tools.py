@@ -1397,25 +1397,21 @@ def _log_medication(
 _STALENESS_THRESHOLD_HOURS = 72
 # Files that should be refreshed daily by their respective syncs.
 # Anything in here older than _STALENESS_THRESHOLD_HOURS gets a stale_warning.
-# Reason: the iPhone Baseline Sync app silently fell behind for 18 days
-# (apple_health_latest.json) and Milo coached off the dead surface. The
-# warning is the tripwire so the next outage is caught the day it starts.
+# Intentionally empty after the Apr 3 2026 JSON-writes retirement (commit
+# 893f215 "Remove JSON writes from wearable integrations (Tier 4)"). The
+# apple_health / garmin / oura / whoop integrations now write SQLite-first
+# and no longer produce *_latest.json sidecars. Tracking those files here
+# produced a false-positive stale alert on Apr 13: files frozen 10 days ago
+# not because the pipeline was broken, but because the pipeline had
+# intentionally stopped writing them.
 #
-# Kept narrow on purpose. garmin_daily.json is a derived rollup of
-# garmin_latest.json — alerting on both is noise. briefing.json is
-# regenerated on demand, not a sync target. lab_results.json is
-# event-driven (not daily).
-#
-# TODO(baseline-consolidation): once Milestone 3 lands the JSON sidecars
-# into SQLite tables, swap this filesystem scan for a
-# MAX(created_at) query against apple_health_measurement /
-# garmin_measurement. Milestone 6 then unifies this tripwire with
-# scripts/system-health-check.sh so freshness is checked in exactly
-# one place. See hub/plans/2026-04-12-baseline-consolidation.md.
-_FRESHNESS_TRACKED = {
-    "apple_health_latest.json",
-    "garmin_latest.json",
-}
+# The filesystem-scan machinery below is preserved because Milestone 6 of
+# the baseline-consolidation plan will repoint freshness at a
+# MAX(created_at) query against wearable_daily / apple_health tables.
+# Re-populate this set once that SQLite-era freshness surface lands. Until
+# then, keep it empty so we don't alert on ghosts.
+# See hub/plans/2026-04-12-baseline-consolidation.md Milestone 6.
+_FRESHNESS_TRACKED: set[str] = set()
 
 
 def _get_status(user_id: str | None = None) -> dict:

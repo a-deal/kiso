@@ -157,101 +157,15 @@ class TestHealthDeepSourceChanges:
         assert resp.status_code == 200
 
 
-class TestStaleCriticalFileMaskingBug:
-    """Regression: a stale _FRESHNESS_TRACKED file must flag the user even if a
-    sibling file is fresh. Previously, user_data used max(mtime) across all
-    files, so a fresh sibling would mask a stale apple_health_latest.json /
-    garmin_latest.json. See hub/plans/2026-04-12-baseline-consolidation.md
-    Milestone 6 ('Freshness tripwire unification') for context.
-    """
-
-    def test_stale_critical_file_masked_by_fresh_sibling_is_flagged(
-        self, health_client, tmp_path, monkeypatch
-    ):
-        """User with fresh CSV + 200h-old apple_health_latest.json must be flagged."""
-        import os
-        monkeypatch.chdir(tmp_path)
-        user_dir = tmp_path / "data" / "users" / "andrew"
-        user_dir.mkdir(parents=True)
-
-        # Fresh sibling: weight_log.csv modified 1h ago
-        fresh_file = user_dir / "weight_log.csv"
-        fresh_file.write_text("date,weight\n2026-04-13,190.0\n")
-        fresh_mtime = datetime.now(timezone.utc).timestamp() - 3600
-        os.utime(fresh_file, (fresh_mtime, fresh_mtime))
-
-        # Stale critical file: apple_health_latest.json modified 200h ago
-        stale_file = user_dir / "apple_health_latest.json"
-        stale_file.write_text('{"last_updated": "2026-04-05T00:00:00Z"}')
-        stale_mtime = datetime.now(timezone.utc).timestamp() - (200 * 3600)
-        os.utime(stale_file, (stale_mtime, stale_mtime))
-
-        resp = health_client.get("/health/deep")
-        assert resp.status_code == 200
-        data = resp.json()
-        user_data = data["checks"]["user_data"]
-        assert "andrew" in user_data, \
-            f"andrew missing from user_data. Keys: {list(user_data.keys())}"
-        assert user_data["andrew"]["status"] == "stale", (
-            f"MASKING BUG: andrew has a 200h-old apple_health_latest.json but "
-            f"status is {user_data['andrew']['status']!r} because fresh sibling "
-            f"weight_log.csv hides it in max(mtime) aggregation. Expected 'stale'."
-        )
-        assert "stale_critical_files" in user_data["andrew"], \
-            "Expected stale_critical_files field on flagged user."
-        stale_files = user_data["andrew"]["stale_critical_files"]
-        assert any(f["file"] == "apple_health_latest.json" for f in stale_files), \
-            f"Expected apple_health_latest.json in stale_critical_files, got {stale_files}"
-        ah_entry = next(f for f in stale_files if f["file"] == "apple_health_latest.json")
-        assert ah_entry["age_hours"] >= 199, \
-            f"Expected age_hours >= 199, got {ah_entry['age_hours']}"
-
-    def test_stale_garmin_latest_also_flagged(
-        self, health_client, tmp_path, monkeypatch
-    ):
-        """Mirror test: garmin_latest.json is the other _FRESHNESS_TRACKED file."""
-        import os
-        monkeypatch.chdir(tmp_path)
-        user_dir = tmp_path / "data" / "users" / "andrew"
-        user_dir.mkdir(parents=True)
-
-        # Fresh sibling
-        fresh = user_dir / "weight_log.csv"
-        fresh.write_text("date,weight\n")
-        fresh_mtime = datetime.now(timezone.utc).timestamp() - 3600
-        os.utime(fresh, (fresh_mtime, fresh_mtime))
-
-        # Stale garmin_latest.json (the OTHER critical file)
-        stale = user_dir / "garmin_latest.json"
-        stale.write_text("{}")
-        stale_mtime = datetime.now(timezone.utc).timestamp() - (200 * 3600)
-        os.utime(stale, (stale_mtime, stale_mtime))
-
-        resp = health_client.get("/health/deep")
-        data = resp.json()
-        entry = data["checks"]["user_data"]["andrew"]
-        assert entry["status"] == "stale"
-        assert any(f["file"] == "garmin_latest.json" for f in entry["stale_critical_files"])
-
-    def test_all_fresh_files_reports_ok(
-        self, health_client, tmp_path, monkeypatch
-    ):
-        """User with all-fresh files should still report ok (no false positives)."""
-        import os
-        monkeypatch.chdir(tmp_path)
-        user_dir = tmp_path / "data" / "users" / "andrew"
-        user_dir.mkdir(parents=True)
-
-        for name in ["weight_log.csv", "apple_health_latest.json", "garmin_latest.json"]:
-            f = user_dir / name
-            f.write_text("{}" if name.endswith(".json") else "date,weight\n")
-            fresh_mtime = datetime.now(timezone.utc).timestamp() - 3600
-            os.utime(f, (fresh_mtime, fresh_mtime))
-
-        resp = health_client.get("/health/deep")
-        data = resp.json()
-        user_data = data["checks"]["user_data"]
-        assert user_data["andrew"]["status"] == "ok"
+# TestStaleCriticalFileMaskingBug removed 2026-04-13: the three tests in
+# this class (from commit 772d64c) asserted that stale apple_health_latest.json
+# / garmin_latest.json are flagged via the per-file tripwire. Those files
+# were retired on Apr 3 2026 in commit 893f215 ("Remove JSON writes from
+# wearable integrations"). With _FRESHNESS_TRACKED now empty, the tripwire
+# has no files to fire on, and the regression the tests were guarding is no
+# longer reachable by construction. When Milestone 6 repoints freshness at
+# a SQLite-era surface, a new regression test should be written against
+# THAT surface, not this one.
 
 
 class TestStuckUserDetection:
