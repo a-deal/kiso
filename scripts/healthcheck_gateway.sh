@@ -40,6 +40,18 @@ if [ -n "$STUCK" ]; then
     FAILURES="$FAILURES\n- Stuck users (no wearable data): $STUCK"
 fi
 
+# Check 4b: Stale critical files (per-user tripwire added in 772d64c).
+# The per-file freshness check in deep_health_check() fires when a tracked
+# file (apple_health_latest.json, garmin_latest.json) is >72h old even if
+# a sibling file is fresh. Without this alert wiring the tripwire fires
+# silently — see hub/plans/2026-04-12-baseline-consolidation.md Milestone 6.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+STALE_CRIT=$(echo "$DEEP" | python3 "$SCRIPT_DIR/health_deep_alert_parser.py" 2>/dev/null)
+if [ -n "$STALE_CRIT" ]; then
+    STALE_CRIT_INDENT=$(echo "$STALE_CRIT" | sed 's/^/    /')
+    FAILURES="$FAILURES\n- Stale critical files (per-user tripwire):\n$STALE_CRIT_INDENT"
+fi
+
 # Check 5: Cloudflare tunnel alive
 CF_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://auth.mybaseline.health/health" 2>/dev/null)
 if [ "$CF_STATUS" = "000" ] || [ "$CF_STATUS" = "502" ] || [ "$CF_STATUS" = "503" ]; then
