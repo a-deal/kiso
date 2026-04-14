@@ -54,10 +54,42 @@ _USER_HOME = Path(os.path.expanduser("~/.config/health-engine"))
 
 
 def _user_dir(user_id: str) -> Path:
-    """Per-user data directory under data/users/<user_id>/."""
+    """Per-user data directory under data/users/<user_id>/.
+
+    New directories may only be created for slugs with a matching
+    person record. Existing directories pass through unchanged
+    (backward compat for legacy users). Guards against ghost-user
+    creation from CLI typos or stray tool invocations; the person
+    record is the source of truth, the directory follows.
+    Pinned by tests/test_user_dir_guard.py.
+    """
     base = PROJECT_ROOT / "data" / "users" / user_id
+    if not base.exists():
+        if not _person_exists_for_slug(user_id):
+            raise ValueError(
+                f"unknown user_id: {user_id!r} — no matching person record. "
+                "Onboard the user before invoking tools with this slug."
+            )
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+def _person_exists_for_slug(user_id: str) -> bool:
+    """Check whether a person row exists for the given health_engine_user_id.
+
+    Used by _user_dir to refuse ghost-directory creation. Returns False on
+    any DB error (fail-closed: if we can't verify, we don't create).
+    """
+    try:
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        row = get_db().execute(
+            "SELECT 1 FROM person WHERE health_engine_user_id = ? AND deleted_at IS NULL",
+            (user_id,),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
 
 
 def _config_path(user_id: str | None = None) -> Path:
