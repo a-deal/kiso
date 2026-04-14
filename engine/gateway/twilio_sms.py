@@ -27,6 +27,21 @@ logger = logging.getLogger("health-engine.twilio")
 
 _AUDIT_LOG_PATH = os.path.join("data", "admin", "api_audit.jsonl")
 
+# Phone numbers that must NOT receive any outbound from this module.
+# Added 2026-04-13 (architecture audit session). See:
+#   hub/plans/audit-2026-04-13/ground-truth.md
+# Checked in BOTH `send_sms` (direct outbound / agent tool path) AND
+# `_forward_to_openclaw` (inbound-reply path), since neither consults
+# person.channel. Removing an entry here re-enables every outbound path
+# in this file for that phone — update the audit context at the same time.
+#
+# NOT covered by this list: voice_bridge.py (outbound voice calls, if any)
+# and any other send helper outside twilio_sms. If that surface exists,
+# it needs its own mute check or this should be lifted to a single chokepoint.
+_MUTED_PHONES: set[str] = {
+    "+17038878948",  # Paul — muted during cleanup audit, pending proper resolution
+}
+
 
 def _audit_log(action: str, user_id: str, params: dict,
                error: str | None = None, elapsed_ms: int = 0):
@@ -127,6 +142,20 @@ def send_sms(to: str, body: str, user_id: str = "",
     if not to.startswith("+"):
         to = "+" + to
 
+    # Mute list: drop outbound to phones we've explicitly silenced.
+    # See _MUTED_PHONES comment at top of module.
+    if to in _MUTED_PHONES:
+        logger.warning(
+            "twilio_sms.send_sms: dropping outbound to muted phone %s (user_id=%s)",
+            to, user_id,
+        )
+        _audit_log("send_muted", user_id, {
+            "to": to,
+            "body_len": len(body),
+            "reason": "phone in _MUTED_PHONES",
+        })
+        return {"status": "muted", "to": to}
+
     if not account_sid or not auth_token or not from_number:
         error = "Twilio credentials not configured in gateway.yaml"
         _audit_log("send", user_id, {"to": to}, error=error)
@@ -171,7 +200,20 @@ def _forward_to_openclaw(from_number: str, body: str, user_id: str):
 
     Uses openclaw agent CLI to inject the message into the agent session,
     then delivers the reply back via SMS.
+
+    Phones listed in _MUTED_PHONES short-circuit before any outbound call.
     """
+    if from_number in _MUTED_PHONES:
+        logger.warning(
+            "twilio_sms: dropping inbound forward for muted phone %s (user_id=%s)",
+            from_number, user_id,
+        )
+        _audit_log("inbound_muted", user_id or from_number, {
+            "from": from_number,
+            "reason": "phone in _MUTED_PHONES",
+        })
+        return
+
     try:
         result = subprocess.run(
             [
