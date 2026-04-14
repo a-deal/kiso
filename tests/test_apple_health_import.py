@@ -120,12 +120,16 @@ class TestImportAppleHealthTool:
         saved = data_dir / "apple_health_latest.json"
         assert not saved.exists(), "apple_health_latest.json should not be written (Tier 4)"
 
-    def test_file_not_found(self):
+    def test_file_not_found(self, tmp_path):
         """Should return error dict for missing file."""
-        result = _import_apple_health(
-            file_path="/nonexistent/file.zip",
-            user_id="test_user",
-        )
+        # Patch _data_dir so _import_apple_health doesn't try to resolve
+        # 'test_user' through _user_dir's person-row guard. This test is
+        # about file-not-found behavior, not user resolution.
+        with patch("mcp_server.tools._data_dir", return_value=tmp_path / "data"):
+            result = _import_apple_health(
+                file_path="/nonexistent/file.zip",
+                user_id="test_user",
+            )
         assert result["imported"] is False
         assert "not found" in result["error"].lower() or "File not found" in result["error"]
 
@@ -191,6 +195,21 @@ class TestImportAppleHealthTool:
 
 class TestUploadEndpoint:
     """Tests for the /api/upload file upload endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_data_dir(self, tmp_path, monkeypatch):
+        """Route _data_dir to tmp so tests don't hit _user_dir's person guard
+        (commit ed84010) and don't pollute real data/users/. Previously these
+        tests leaked test_upload/test_cleanup directories into prod; now the
+        guard blocks ghost-user creation, so the tests need explicit isolation.
+        """
+        def _tmp_data_dir(user_id=None):
+            if user_id:
+                p = tmp_path / "data" / "users" / user_id
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+            return tmp_path / "data"
+        monkeypatch.setattr("mcp_server.tools._data_dir", _tmp_data_dir)
 
     @pytest.fixture
     def client(self):
