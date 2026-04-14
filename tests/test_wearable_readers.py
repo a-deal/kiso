@@ -508,6 +508,85 @@ class TestBriefingWeightFromSqlite:
         assert row["date"] == "2026-04-01"
 
 
+class TestBriefingMeasurementPromptsNoCsvFallback:
+    """The measurement-prompts pair (bp/weight) must read SQLite only.
+
+    Closes Open Thread #1 from the 2026-04-13-1644 handoff. With commit
+    ed84010 (`_user_dir` ghost-user guard) in place, every legitimate
+    briefing caller has a resolvable `_person_id`, so the CSV fallback
+    at briefing.py:~830/877 became dead code. This test proves it stays
+    dead: running build_briefing against a user with SQLite data must
+    never call read_csv(bp_log.csv) or read_csv(weight_log.csv).
+
+    If a future edit reintroduces the fallback, this test fails loudly.
+    """
+
+    def test_build_briefing_never_reads_bp_or_weight_csv(
+        self, briefing_db, monkeypatch
+    ):
+        """
+        The scenario that exercises the dead fallback: a person row exists
+        (so briefing runs), but bp_entry and weight_entry are empty (so the
+        current SQLite queries return nothing). In that state the OLD code
+        fell through to read_csv(bp_log.csv) / read_csv(weight_log.csv).
+        After commit 2 of this session, that fallthrough is gone; `last_bp_date`
+        and `last_weight_date` stay None, and briefing falls through to the
+        `elif has_bp_monitor` / `elif has_scale` no-data-yet prompts.
+        """
+        conn, db_path, tmp_path = briefing_db
+
+        # Empty bp_entry and weight_entry for this person so the SQLite
+        # reads return nothing. That's the exact state the fallback was
+        # designed to handle — and the state we want to force into the
+        # no-data-yet prompts instead.
+        conn.execute("DELETE FROM bp_entry WHERE person_id = ?", ("p1",))
+        conn.execute("DELETE FROM weight_entry WHERE person_id = ?", ("p1",))
+        conn.commit()
+
+        data_dir = tmp_path / "data" / "users" / "andrew"
+        data_dir.mkdir(parents=True)
+        (data_dir / "config.yaml").write_text("profile:\n  age: 35\n  sex: M\n")
+
+        # Place CSV files with "impossible" values on disk. If the fallback
+        # reappears, build_briefing would read these. The monkeypatch below
+        # catches the call before the impossible values leak into the briefing.
+        (data_dir / "bp_log.csv").write_text("date,systolic,diastolic\n2020-01-01,999,999\n")
+        (data_dir / "weight_log.csv").write_text("date,weight_lbs\n2020-01-01,888\n")
+
+        calls = []
+        import engine.coaching.briefing as briefing_mod
+        real_read_csv = briefing_mod.read_csv
+
+        def tracking_read_csv(path, *args, **kwargs):
+            calls.append(str(path))
+            return real_read_csv(path, *args, **kwargs)
+
+        monkeypatch.setattr(briefing_mod, "read_csv", tracking_read_csv)
+
+        config = {
+            "data_dir": str(data_dir),
+            "profile": {"age": 35, "sex": "M"},
+        }
+
+        from engine.gateway.db import close_db
+        with patch("engine.gateway.db._db_path", return_value=db_path):
+            briefing_mod.build_briefing(config)
+
+        bp_calls = [c for c in calls if c.endswith("bp_log.csv")]
+        weight_calls = [c for c in calls if c.endswith("weight_log.csv")]
+        assert bp_calls == [], (
+            f"build_briefing called read_csv(bp_log.csv) — the dead CSV "
+            f"fallback at briefing.py:~830 has reappeared. Calls: {bp_calls}"
+        )
+        assert weight_calls == [], (
+            f"build_briefing called read_csv(weight_log.csv) — the dead "
+            f"CSV fallback at briefing.py:~877 has reappeared. Calls: "
+            f"{weight_calls}"
+        )
+
+        close_db()
+
+
 class TestBriefingBurnFromSqlite:
     """Briefing calorie burn should come from wearable_daily, not garmin_daily_burn.json."""
 

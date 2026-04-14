@@ -813,24 +813,21 @@ def build_briefing(config: dict) -> dict:
     has_tape = 'tape_measure' in equipment or config_profile.get('waist_inches') is not None
     has_wearable = any(w in equipment for w in ['garmin', 'oura', 'whoop', 'apple_watch']) or briefing.get('wearable_source')
 
-    # Blood pressure: 7-day series monthly (AHA standard)
+    # Blood pressure: 7-day series monthly (AHA standard).
+    # SQLite-only: the CSV fallback was removed after commit ed84010
+    # (`_user_dir` ghost-user guard) made `_person_id` resolvable for
+    # every legitimate caller. No data yet falls through to the
+    # `elif has_bp_monitor` / `else` branches below.
     last_bp_date = None
     if _person_id:
-        try:
-            from engine.gateway.db import get_db, init_db
-            init_db()
-            _bp_row = get_db().execute(
-                "SELECT date FROM bp_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
-                (_person_id,),
-            ).fetchone()
-            if _bp_row:
-                last_bp_date = _bp_row["date"]
-        except Exception:
-            pass
-    if not last_bp_date:
-        bp_rows_raw = read_csv(data_dir / 'bp_log.csv')
-        if bp_rows_raw:
-            last_bp_date = bp_rows_raw[-1].get('date', '')
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        _bp_row = get_db().execute(
+            "SELECT date FROM bp_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (_person_id,),
+        ).fetchone()
+        if _bp_row:
+            last_bp_date = _bp_row["date"]
     if last_bp_date:
         try:
             days_since_bp = (today_dt - datetime.strptime(last_bp_date, '%Y-%m-%d')).days
@@ -860,24 +857,17 @@ def build_briefing(config: dict) -> dict:
             'schedule': 'monthly (7-day series)',
         })
 
-    # Weight: daily weigh-in
+    # Weight: daily weigh-in. SQLite-only (see bp comment above for why).
     last_weight_date = None
     if _person_id:
-        try:
-            from engine.gateway.db import get_db, init_db
-            init_db()
-            _wt_row = get_db().execute(
-                "SELECT date FROM weight_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
-                (_person_id,),
-            ).fetchone()
-            if _wt_row:
-                last_weight_date = _wt_row["date"]
-        except Exception:
-            pass
-    if not last_weight_date:
-        weight_rows = read_csv(data_dir / 'weight_log.csv')
-        if weight_rows:
-            last_weight_date = weight_rows[-1].get('date', '')
+        from engine.gateway.db import get_db, init_db
+        init_db()
+        _wt_row = get_db().execute(
+            "SELECT date FROM weight_entry WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (_person_id,),
+        ).fetchone()
+        if _wt_row:
+            last_weight_date = _wt_row["date"]
     if last_weight_date:
         try:
             days_since_weight = (today_dt - datetime.strptime(last_weight_date, '%Y-%m-%d')).days
